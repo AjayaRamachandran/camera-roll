@@ -8,7 +8,7 @@ you cannot find anything, and photos that are supposed to be memories just rot
 inside a folder tree nobody opens. Camera Roll turns that mess
 back into something you actually want to look through.
 
-This is a private tool, not a product. It is not meant for public distribution,
+This is a private (mostly vibe coded) tool, not a product. It is not meant for public distribution,
 multi-user setups, or running on someone else's machine. It exists to make my
 own library browsable, fast, and pleasant.
 
