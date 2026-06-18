@@ -1,0 +1,35 @@
+[package]
+name = "photoviewer"
+version = "0.1.0"
+description = "Tauri shell for PhotoViewer: frosted-glass window + Python sidecar manager."
+authors = ["you"]
+edition = "2021"
+rust-version = "1.77"
+
+# The library crate holds the actual app logic so it can be shared with mobile
+# targets later; `main.rs` is just a thin entry point.
+[lib]
+name = "photoviewer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client used by the Rust side to talk to the Python FastAPI server.
+# rustls-tls avoids a system OpenSSL dependency on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[target.'cfg(windows)'.dependencies]
+# Native, OS-accelerated window blur (Acrylic). This is the "Rust-native"
+# frosted-glass path — the DWM compositor blurs whatever is behind the window,
+# so there is no manual pixel blurring (and no OpenCV) involved.
+window-vibrancy = "0.5"
+
+[features]
+# Enabled by `tauri build --release` tooling; keeps custom protocol assets.
+custom-protocol = ["tauri/custom-protocol"]

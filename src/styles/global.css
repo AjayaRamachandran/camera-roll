@@ -1,0 +1,77 @@
+/*
+ * Global, app-wide styles.
+ *
+ * The single most important rule here: EVERYTHING is transparent. The window
+ * is configured as `transparent: true` on the Rust side and has native acrylic
+ * applied to it, so any opaque background painted by the webview would cover up
+ * the OS blur and defeat the frosted-glass effect.
+ */
+
+/* @import must come first in a stylesheet to be honored. */
+@import "tailwindcss";
+@import "./frosted.css";
+@import "./photos.css";
+
+/* Font stacks. Per AGENTS.md: Google Sans everywhere, Google Sans Code for
+   photo metadata only. Never Inter. These fall back to the platform UI font if
+   the licensed Google Sans files are not installed. */
+@theme {
+  --font-sans: "Google Sans", "Google Sans Text", system-ui, "Segoe UI", sans-serif;
+  --font-code: "Google Sans Code", ui-monospace, "Cascadia Code", "Segoe UI", monospace;
+}
+
+:root {
+  color-scheme: dark;
+  /* Height of the custom title bar. Used by .app-content and the TitleBar. */
+  --titlebar-height: 26px;
+  /* Aliases used by plain CSS (Tailwind utilities use --font-sans/--font-code). */
+  --font-google-sans: "Google Sans", "Google Sans Text", system-ui, "Segoe UI", sans-serif;
+  --font-google-sans-code: "Google Sans Code", ui-monospace, "Cascadia Code", "Segoe UI", monospace;
+  font-family: var(--font-google-sans);
+  font-size: 14px;
+  /* Subtle frosted tint colors, reused by components. */
+  --frost-text: rgba(255, 255, 255, 0.92);
+  --frost-text-dim: rgba(255, 255, 255, 0.60);
+  --frost-panel: rgba(255, 255, 255, 0.06);
+  --frost-border: rgba(14, 11, 11, 0.12);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  /* Transparent so the native acrylic blur behind the window shows through. */
+  background: transparent !important;
+  overflow: hidden;
+}
+
+#root {
+  position: relative;
+}
+
+/* Clickable controls get the pointer cursor (WebView2 defaults <button> to the
+   arrow). Disabled buttons keep the default cursor. Icon buttons already fade in
+   a light hover tint via Tailwind's `hover:bg-white/10 transition-colors`. */
+button:not(:disabled),
+[role="button"],
+a[href] {
+  cursor: pointer;
+}
+
+/* The empty content surface. Add your UI inside <main class="app-content">.
+   Offset from the top so it sits below the custom title bar. */
+.app-content {
+  position: absolute;
+  top: var(--titlebar-height, 36px);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  color: var(--frost-text);
+  /* `data-tauri-drag-region` on the element makes the whole empty area a
+     draggable window handle, which feels right for a frameless frosted panel. */
+}
+

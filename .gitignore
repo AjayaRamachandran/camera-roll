@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Vite cache
+.vite/
+
+# Rust / Tauri build output
+src-tauri/target/
+
+# Python
+server/.venv/
+server/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Generated Tauri files
+src-tauri/gen/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

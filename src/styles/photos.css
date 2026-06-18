@@ -1,0 +1,111 @@
+/*
+ * Photo browsing surfaces: grid, detail view, filmstrip, and the metadata
+ * popover. Layout is mostly Tailwind in the components; this file holds the
+ * genuinely structural / bespoke pieces (the frosted panel recipe, the hero
+ * morph layer, and the filmstrip scroll behavior).
+ */
+
+/* Frosted panel used by the info popover and detail chrome. Apple dark-mode
+   glass material: a translucent light gray, a bright specular border on the top
+   edge, and a soft diffuse shadow.
+
+   We do NOT use backdrop-filter to blur the photo. WebView2 (Chromium) will not
+   blur a backdrop that lives on its own GPU compositing layer, and the detail
+   photo is exactly that (the swipe track is transformed). backdrop-filter
+   therefore lets the photo through crisp. Instead the panel clips a separately
+   blurred copy of the photo, aligned to the viewport (see InfoPopover): that is
+   real frosted glass that works regardless of compositing.
+
+   This class is ONLY the glass material (color, border, shadow). It must not set
+   `position` or `overflow`: photos.css is imported un-layered, so those would
+   beat Tailwind utilities and, for example, override ZoomStepper's `absolute`,
+   knocking it out of its floating position. The InfoPopover, which needs a
+   clipping positioned container for its blurred copy, sets `relative
+   overflow-hidden` itself via Tailwind. */
+.frosted-panel {
+  background: rgba(44, 44, 49, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 8px 40px rgba(0, 0, 0, 0.48);
+}
+
+/* Traditional glass: a real backdrop-filter blur of whatever is behind. Use
+   this for chrome that floats over the GRID (e.g. the zoom stepper) where the
+   backdrop is ordinary painted content, so backdrop-filter samples it fine.
+   Do NOT use it over the detail photo: that layer is composited (the swipe
+   track is transformed) and WebView2 won't blur it, leaving it crisp. Those
+   panels use .frosted-panel + the aligned blurred copy instead.
+
+   No `overflow: hidden`: WebView2 drops the whole backdrop-filter layer when it
+   clips. The element's own border-radius clips the blur on its own. */
+.frosted-glass {
+  background: rgba(44, 44, 49, 0.4);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 8px 40px rgba(0, 0, 0, 0.48);
+}
+
+/* The hero element that grows from a grid cell into the full photo. It holds
+   the thumbnail (cropped) and the full image (fitted) stacked, and crossfades
+   between them as it grows. */
+.hero-layer {
+  position: fixed;
+  overflow: hidden;
+  z-index: 60;
+  border-radius: 0;
+}
+.hero-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Detail backdrop. Transparent on purpose: while viewing, the grid is hidden
+   and this layer lets the app's own empty frosted background show behind the
+   photo, rather than the mega-tiles or a flat black fill. */
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: transparent;
+}
+
+/* Photo grid: hide the native scrollbar so the overlay scrollbar can sit above
+   the content and tiles fill the full window width without a gutter. */
+.photo-grid-scroll {
+  scrollbar-width: none;
+}
+.photo-grid-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Filmstrip: a horizontal, snappy thumbnail rail at the bottom of the detail
+   view. Hide the scrollbar but keep it scrollable. */
+.filmstrip {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.filmstrip::-webkit-scrollbar {
+  display: none;
+}
+
+/* The current thumbnail in the filmstrip reads as selected without a pill or
+   colored chip: a clean light ring and full opacity. */
+.filmstrip-item {
+  opacity: 0.55;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.filmstrip-item:hover {
+  opacity: 0.85;
+}
+.filmstrip-item.is-current {
+  opacity: 1;
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -2px;
+}

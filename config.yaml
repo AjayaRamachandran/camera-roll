@@ -1,0 +1,30 @@
+# Camera Roll configuration.
+#
+# These paths are intentionally hard-coded here so the rest of the app (Python
+# backend, Rust shell, and React frontend) all read the same source of truth.
+# Edit them to point at a different library or index location.
+
+# Folder that gets recursively scanned for photos.
+photo_root: "C:\\Users\\Ajaya\\OneDrive\\Pictures\\iPhone Backup 6-12-26"
+
+# Folder where all generated index files live. The user has full access to this.
+# Inside it the app creates:
+#   index.json        sorted list of every photo (original path + thumbnail)
+#   thumbnails/        one cropped JPG per photo
+#   megatiles/g5, g10, g20   composed tiles per zoom level the grid renders
+index_dir: "C:\\Users\\Ajaya\\OneDrive\\Pictures\\Indexes"
+
+# Thumbnail edge length in pixels (square, center-cropped).
+# Must equal TILE_PX / smallest_grid so primary-level cells fit thumbnails
+# without upscaling. TILE_PX is rounded up to the LCM of all tile_grids, so
+# choose a value where thumb_size * tile_grids[0] is already that multiple
+# (e.g. 150 * 7 = 1050 = LCM(7,15,30) * 5).
+thumb_size: 150
+
+# Mega-tile grid dimensions, one set of tiles per level. Lower numbers show
+# larger photos (fewer per screen); higher numbers pack more photos in. Each
+# level's tiles are the same pixel size, so the densest sets are the cheapest.
+tile_grids: [7, 15, 30]
+
+# JPEG quality for the generated thumbnails and mega-tiles (1-95).
+jpeg_quality: 80

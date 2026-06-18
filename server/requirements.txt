@@ -1,0 +1,10 @@
+# PhotoViewer Python backend dependencies.
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic==2.10.4
+
+# Image work: Pillow handles resize/crop/EXIF (lighter than OpenCV for this),
+# pillow-heif adds HEIC/HEIF support for iPhone photos, PyYAML reads config.yaml.
+Pillow==11.0.0
+pillow-heif==0.21.0
+PyYAML==6.0.2

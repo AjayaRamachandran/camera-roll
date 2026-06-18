@@ -1,0 +1,60 @@
+/*
+ * Frosted-glass dithering overlay.
+ *
+ * Background story:
+ *   The blur itself is done natively (Windows Acrylic via window-vibrancy on the
+ *   Rust side). Acrylic looks great but, like any blur over smooth gradients, it
+ *   can show visible "banding" (stair-stepped color bands) on some displays.
+ *
+ *   The fix is dithering: scatter a tiny amount of high-frequency noise across
+ *   the whole surface so the eye blends adjacent bands into a smooth gradient.
+ *   We do that here in pure CSS with an inline SVG `feTurbulence` noise texture,
+ *   which is GPU-cheap and adds zero JS/runtime cost.
+ *
+ * Tuning knobs:
+ *   --dither-opacity   how strong the noise is (0.02–0.08 is a good range)
+ *   --dither-scale     size of the noise tile in px (smaller = finer grain)
+ *   baseFrequency      inside the SVG below; higher = finer grain
+ */
+
+/*
+ * App-level frosted background tint. Sits over the native OS Acrylic blur and
+ * under everything else. Kept intentionally light-handed so the OS blur reads
+ * clearly — this is not the same recipe as the overlay panels below.
+ */
+.frosted-tint {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+
+  --frost-tint-color: rgb(26, 26, 28);
+  --frost-tint-opacity: 0.34;
+
+  background: var(--frost-tint-color);
+  opacity: var(--frost-tint-opacity);
+}
+
+.frosted-dither {
+  /* Full-window, fixed, and click-through so it never intercepts input.
+     z-index 1 keeps it above the tint layer (still below .app-content). */
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+
+  --dither-opacity: 0.09;
+  --dither-scale: 150px;
+
+  /* Inline SVG fractal-noise texture, tiled across the window. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: var(--dither-scale) var(--dither-scale);
+  background-repeat: repeat;
+
+  opacity: var(--dither-opacity);
+  /* `overlay` blends the noise into both light and dark regions so it breaks up
+     banding without visibly graining the image. */
+  mix-blend-mode: overlay;
+
+  will-change: opacity;
+}
