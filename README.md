@@ -112,7 +112,7 @@ Tie People, OCR text, and location together into one **comprehensive search** so
 a single natural query spans all of them. The target experience is typing
 something like:
 
-> maithili christian science center feb 2025
+> ajaya christian science center feb 2025
 
 and getting back the photos of that person, at that place, around that time,
 including ones where the place name only appears as text in the image.
