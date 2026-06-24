@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from PIL import Image, ImageOps
 
 import imaging
+import secondary_index
 
 # Pull the shared config/paths from the imaging module.
 PHOTO_ROOT = imaging.PHOTO_ROOT
@@ -33,6 +34,8 @@ TILE_GRIDS = imaging.TILE_GRIDS
 PRIMARY_GRID = imaging.PRIMARY_GRID
 TILE_PX = imaging.TILE_PX
 IMAGE_EXTS = imaging.IMAGE_EXTS
+VIDEO_EXTS = imaging.VIDEO_EXTS
+MEDIA_EXTS = imaging.MEDIA_EXTS
 WEB_DISPLAYABLE = imaging.WEB_DISPLAYABLE
 
 
@@ -54,6 +57,16 @@ def _set_status(**kw) -> None:
         STATUS.update(kw)
 
 
+def snapshot_photos() -> list[dict]:
+    """A copy of the canonical photo list, for the secondary index worker.
+
+    The list is copied under the lock; the dicts inside are treated read-only by
+    callers, so a shallow copy is enough and keeps the lock held only briefly.
+    """
+    with _state_lock:
+        return list(PHOTOS)
+
+
 def load_index() -> None:
     global PHOTOS, BY_ID, _loaded_thumb_size
     if not INDEX_FILE.exists():
@@ -72,7 +85,7 @@ def load_index() -> None:
 
 def save_index() -> None:
     payload = {
-        "version": 3,
+        "version": 4,
         "tile_grids": TILE_GRIDS,
         "thumb_size": THUMB_SIZE,
         "tile_px": TILE_PX,
@@ -146,7 +159,7 @@ def scan_library() -> None:
         found = []
         for dirpath, _dirs, files in os.walk(PHOTO_ROOT):
             for name in files:
-                if os.path.splitext(name)[1].lower() in IMAGE_EXTS:
+                if os.path.splitext(name)[1].lower() in MEDIA_EXTS:
                     found.append(os.path.join(dirpath, name))
 
         found_set = set(found)
@@ -181,6 +194,8 @@ def scan_library() -> None:
         save_index()
         _loaded_thumb_size = THUMB_SIZE
         _set_status(state="done", message="", total=len(new_paths), done=len(new_paths))
+        # Let the background face pass pick up anything new this scan added.
+        secondary_index.notify_index_changed()
     except Exception as exc:
         print(f"[backend] scan failed: {exc}")
         _set_status(state="error", message=str(exc))
@@ -203,6 +218,9 @@ app.add_middleware(
 def _startup() -> None:
     load_index()
     threading.Thread(target=scan_library, daemon=True).start()
+    # Background face/people indexing. Runs independently of the main scan and
+    # yields while it is running, so it never delays the gallery being ready.
+    secondary_index.start()
 
 
 @app.get("/health")
@@ -229,6 +247,112 @@ def get_config() -> dict:
 def index_status() -> dict:
     with _state_lock:
         return dict(STATUS, count=len(PHOTOS))
+
+
+@app.get("/index/secondary/status")
+def index_secondary_status() -> dict:
+    return secondary_index.status()
+
+
+@app.post("/index/secondary/background")
+def index_secondary_background() -> dict:
+    """Drop background indexing to a single quiet thread (used by 'Run in
+    background', so the gallery opens while indexing continues unobtrusively)."""
+    secondary_index.set_mode("background")
+    return secondary_index.status()
+
+
+# --------------------------------------------------------------------------- #
+# People + search. "Tags" are people only for now (locations / OCR text later).
+# --------------------------------------------------------------------------- #
+
+@app.get("/people")
+def people_list() -> dict:
+    return {"people": secondary_index.list_people()}
+
+
+@app.post("/people/{pid}/name")
+def people_set_name(pid: int, payload: dict) -> dict:
+    name = secondary_index.set_person_name(pid, str(payload.get("name", "")))
+    return {"ok": True, "name": name}
+
+
+@app.post("/people/merge")
+def people_merge(payload: dict) -> dict:
+    try:
+        source = int(payload["source"])
+        target = int(payload["target"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="source and target ids required")
+    try:
+        return {"ok": True, **secondary_index.merge_people(source, target)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown person")
+
+
+def _face_crop_response(photo_id: str, bbox) -> Response:
+    """A square headshot JPEG cropped around `bbox` in the given photo.
+
+    The stored box is in the analysis-image coordinate space, so we decode the
+    source at the same size used during indexing, crop a padded square around
+    the face, and return a small JPEG (cached by the webview).
+    """
+    if not bbox:
+        raise HTTPException(status_code=404, detail="no face")
+    photo = BY_ID.get(photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="photo missing")
+
+    img = imaging.load_for_analysis(photo["path"], secondary_index.DETECTION_INPUT_SIZE)
+    if img is None:
+        raise HTTPException(status_code=404, detail="cannot read photo")
+
+    x, y, w, h = bbox
+    iw, ih = img.size
+    # A padded square around the face, clamped to stay fully inside the image so
+    # the crop never distorts when resized.
+    side = min(max(w, h) * 1.6, iw, ih)
+    half = side / 2
+    cx = min(max(x + w / 2, half), iw - half)
+    cy = min(max(y + h / 2, half), ih - half)
+    left, top = int(cx - half), int(cy - half)
+    crop = img.crop((left, top, left + int(side), top + int(side)))
+    crop = crop.resize((256, 256), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    crop.save(buf, "JPEG", quality=88)
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "max-age=3600"},
+    )
+
+
+@app.get("/people/{pid}/face")
+def people_face(pid: int):
+    """A square headshot crop for a person's avatar (their cover face)."""
+    cover = secondary_index.person_cover(pid)
+    if not cover:
+        raise HTTPException(status_code=404, detail="no face for person")
+    return _face_crop_response(cover["photo_id"], cover.get("bbox"))
+
+
+@app.get("/photo/{pid}/faces")
+def photo_faces(pid: str) -> dict:
+    """Every face detected in one photo, with the person each belongs to."""
+    return {"faces": secondary_index.photo_faces(pid)}
+
+
+@app.get("/photo/{pid}/face/{idx}")
+def photo_face_crop(pid: str, idx: int):
+    """A square crop of one detected face in a photo (by detection index)."""
+    return _face_crop_response(pid, secondary_index.face_box(pid, idx))
+
+
+@app.get("/search")
+def search(q: str = "", limit: int = 200) -> dict:
+    photos = secondary_index.search_photos(q, limit)
+    return {"query": q, "count": len(photos), "photos": photos}
 
 
 @app.post("/index/scan")
@@ -285,6 +409,19 @@ def get_photo(pid: str):
         raise HTTPException(status_code=404, detail="file missing")
 
     ext = photo.get("ext", src.suffix.lower())
+    if ext in VIDEO_EXTS:
+        # Stream the original video straight from disk. FileResponse honors the
+        # Range header, so the viewer can seek/scrub without downloading it all.
+        media = {
+            ".mp4": "video/mp4",
+            ".m4v": "video/mp4",
+            ".mov": "video/quicktime",
+            ".webm": "video/webm",
+            ".avi": "video/x-msvideo",
+            ".mkv": "video/x-matroska",
+        }.get(ext, "application/octet-stream")
+        return FileResponse(src, media_type=media)
+
     if ext in WEB_DISPLAYABLE:
         # Web-native formats stream straight from the original file. Nothing is
         # copied; FileResponse reads the original on disk.

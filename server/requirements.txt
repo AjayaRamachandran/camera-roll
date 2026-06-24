@@ -8,3 +8,9 @@ pydantic==2.10.4
 Pillow==11.0.0
 pillow-heif==0.21.0
 PyYAML==6.0.2
+
+# Background face indexing: onnxruntime runs the detector + ArcFace ONNX models,
+# numpy handles the pre/post-processing (kept OpenCV-free). The model files are
+# not pip packages; see server/README.md for where to place them.
+onnxruntime==1.27.0
+numpy==2.4.6

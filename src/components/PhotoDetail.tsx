@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Info, LayoutGrid } from "lucide-react";
 
-import { Photo, photoUrl, thumbUrl } from "@/lib/photoApi";
+import { Photo, isVideo, photoUrl, thumbUrl } from "@/lib/photoApi";
 import { CellRect } from "./PhotoGrid";
 import Filmstrip from "./Filmstrip";
 import InfoPopover from "./InfoPopover";
+import VideoScrubBar from "./VideoScrubBar";
 
 interface PhotoDetailProps {
   photos: Photo[];
@@ -13,6 +14,8 @@ interface PhotoDetailProps {
   /** Screen rect of the grid cell the user opened, for the grow animation. */
   origin: CellRect;
   onClose: () => void;
+  /** Filter the gallery to a person, from a face in the info panel. */
+  onSearchPerson?: (name: string) => void;
 }
 
 // Chrome insets so the photo never sits under the top controls or filmstrip.
@@ -22,6 +25,10 @@ const PAD_X = 28;
 const SWIPE_THRESHOLD = 80; // px of drag that commits to the next/prev photo
 const ZOOM = 2.5; // scale factor for the double-click zoomed view
 const MORPH = "left 340ms cubic-bezier(0.2,0,0,1), top 340ms cubic-bezier(0.2,0,0,1), width 340ms cubic-bezier(0.2,0,0,1), height 340ms cubic-bezier(0.2,0,0,1)";
+// Docked info panel: width it claims on the right, and the shared easing for the
+// nudge (image area shrinking, panel sliding in, top controls shifting left).
+const INFO_WIDTH = 360;
+const NUDGE = "340ms cubic-bezier(0.2,0,0,1)";
 
 interface Rect {
   left: number;
@@ -61,10 +68,17 @@ export default function PhotoDetail({
   startIndex,
   origin,
   onClose,
+  onSearchPerson,
 }: PhotoDetailProps) {
   const [index, setIndex] = useState(startIndex);
   const [phase, setPhase] = useState<Phase>("opening");
   const [showInfo, setShowInfo] = useState(false);
+  // The <video> element of the current slide, when it is a video. A callback
+  // ref keeps this pointed at whatever video is on screen, so the scrub bar
+  // re-binds as you swipe between clips. Null whenever a photo is showing.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const currentIsVideo = isVideo(photos[index]);
+  const startIsVideo = isVideo(photos[startIndex]);
   const [vw, setVw] = useState(window.innerWidth);
   const [vh, setVh] = useState(window.innerHeight);
 
@@ -79,13 +93,16 @@ export default function PhotoDetail({
   }, []);
 
   const photo = photos[index];
-  const target = fitRect(photo, vw, vh);
+  // Width left for the photo once the info panel is docked. Everything that
+  // fits/positions the image works off this, so the photo shrinks to fit.
+  const contentW = vw - (showInfo ? INFO_WIDTH : 0);
+  const target = fitRect(photo, contentW, vh);
 
   // Preload the full images on either side so swiping never stutters waiting on
   // a decode. The browser caches them; mounting the neighbor slide is then free.
   useEffect(() => {
     const preloaded = [index - 2, index - 1, index + 1, index + 2]
-      .filter((i) => i >= 0 && i < photos.length)
+      .filter((i) => i >= 0 && i < photos.length && !isVideo(photos[i]))
       .map((i) => {
         const im = new Image();
         im.src = photoUrl(photos[i].id);
@@ -156,8 +173,8 @@ export default function PhotoDetail({
 
   // Clamp a pan offset so the scaled image can't be dragged off its own edges.
   const clampPan = (x: number, y: number) => {
-    const r = fitRect(photo, vw, vh);
-    const maxX = Math.max(0, (r.width * ZOOM - vw) / 2);
+    const r = fitRect(photo, contentW, vh);
+    const maxX = Math.max(0, (r.width * ZOOM - contentW) / 2);
     const maxY = Math.max(0, (r.height * ZOOM - vh) / 2);
     return {
       x: Math.min(maxX, Math.max(-maxX, x)),
@@ -166,6 +183,7 @@ export default function PhotoDetail({
   };
 
   const toggleZoom = () => {
+    if (currentIsVideo) return; // videos don't zoom; the scrub bar owns gestures
     setPan({ x: 0, y: 0 });
     setZoomed((z) => !z);
   };
@@ -186,10 +204,20 @@ export default function PhotoDetail({
     el.style.transform = `translateX(${translate}px)`;
   };
 
-  // Center the track (slot for current photo) whenever index/size changes.
+  // Center the track (slot for current photo) whenever index/size changes, or
+  // when the steady view first mounts (phase -> "open"). Instant: a swipe-commit
+  // lands here and must not animate back the other way.
+  useLayoutEffect(() => {
+    setTrack(-contentW, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vw, index, phase]);
+
+  // Re-center with a transition when the info panel opens/closes, so the image
+  // glides over as the panel makes room rather than jumping.
   useEffect(() => {
-    setTrack(-vw, false);
-  }, [vw, index]);
+    setTrack(-contentW, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showInfo]);
 
   const hasPrev = index > 0;
   const hasNext = index < photos.length - 1;
@@ -221,12 +249,12 @@ export default function PhotoDetail({
     // Resist dragging past either end of the library.
     if ((d > 0 && !hasPrev) || (d < 0 && !hasNext)) d *= 0.35;
     dx.current = d;
-    setTrack(-vw + d, false);
+    setTrack(-contentW + d, false);
   };
   const commitSwipe = (dir: 1 | -1) => {
     pendingDir.current = dir;
     // dir 1 = go to next (slide left), -1 = previous (slide right).
-    setTrack(dir === 1 ? -2 * vw : 0, true);
+    setTrack(dir === 1 ? -2 * contentW : 0, true);
   };
   const onPointerUp = () => {
     if (!dragging.current) return;
@@ -235,9 +263,13 @@ export default function PhotoDetail({
     const d = dx.current;
     if (d <= -SWIPE_THRESHOLD && hasNext) commitSwipe(1);
     else if (d >= SWIPE_THRESHOLD && hasPrev) commitSwipe(-1);
-    else setTrack(-vw, true); // snap back
+    else setTrack(-contentW, true); // snap back
   };
-  const onTrackTransitionEnd = () => {
+  const onTrackTransitionEnd = (e: React.TransitionEvent) => {
+    // Only the track's own slide animation commits a navigation. Slide images
+    // animate left/top/width/height/transform too, and those bubble up here;
+    // acting on them would advance the index early (landing a photo off).
+    if (e.target !== e.currentTarget || e.propertyName !== "transform") return;
     if (pendingDir.current === 0) return;
     const dir = pendingDir.current;
     pendingDir.current = 0;
@@ -246,22 +278,62 @@ export default function PhotoDetail({
   };
 
   // Wheel: horizontal scroll over the big image swipes like a trackpad.
+  // One gesture only ever advances a single photo. A trackpad fling keeps
+  // firing wheel events (plus momentum) long after the threshold is crossed,
+  // so once we commit we stay locked until the gesture goes quiet.
   const wheelAccum = useRef(0);
+  const wheelLocked = useRef(false);
+  const wheelIdle = useRef<number | null>(null);
   const onWheel = (e: React.WheelEvent) => {
-    if (phase !== "open" || pendingDir.current !== 0 || zoomed) return;
+    if (phase !== "open" || zoomed) return;
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0;
     if (delta === 0) return;
+
+    // Reset the lock only after the gesture has fully settled (no horizontal
+    // wheel events for a short window, momentum included). This MUST run even
+    // while a swipe animation is mid-flight, otherwise the timer expires during
+    // the slide and the trailing momentum from a fast fling commits a second
+    // swipe. Every horizontal event keeps the current gesture alive.
+    if (wheelIdle.current !== null) window.clearTimeout(wheelIdle.current);
+    wheelIdle.current = window.setTimeout(() => {
+      wheelLocked.current = false;
+      wheelAccum.current = 0;
+    }, 160);
+
+    // Don't accumulate while a swipe is animating or while locked, but we still
+    // refreshed the idle timer above so the lock holds until momentum stops.
+    if (pendingDir.current !== 0 || wheelLocked.current) return;
+
     wheelAccum.current += delta;
     if (wheelAccum.current > 60 && hasNext) {
+      wheelLocked.current = true;
       wheelAccum.current = 0;
       commitSwipe(1);
     } else if (wheelAccum.current < -60 && hasPrev) {
+      wheelLocked.current = true;
       wheelAccum.current = 0;
       commitSwipe(-1);
     }
   };
 
-  // Keyboard: arrows navigate, Escape exits zoom (then closes), i toggles info.
+  // When the view first opens, swallow any trackpad momentum that carried over
+  // from scrolling the grid. Without this, the residual wheel events arrive the
+  // instant we go interactive and immediately swipe to the next photo, so you
+  // open photo N and land on N+1. The lock holds until the carried-over gesture
+  // goes quiet (onWheel keeps pushing the idle timer out), or clears promptly if
+  // there was no momentum at all.
+  useEffect(() => {
+    if (phase !== "open") return;
+    wheelLocked.current = true;
+    wheelAccum.current = 0;
+    if (wheelIdle.current !== null) window.clearTimeout(wheelIdle.current);
+    wheelIdle.current = window.setTimeout(() => {
+      wheelLocked.current = false;
+      wheelAccum.current = 0;
+    }, 250);
+  }, [phase]);
+
+  // Keyboard: arrows navigate, Escape exits zoom (then closes), Alt+I toggles info.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -271,7 +343,10 @@ export default function PhotoDetail({
         } else close();
       } else if (e.key === "ArrowRight" && hasNext) setIndex((i) => i + 1);
       else if (e.key === "ArrowLeft" && hasPrev) setIndex((i) => i - 1);
-      else if (e.key.toLowerCase() === "i") setShowInfo((s) => !s);
+      else if (e.altKey && e.code === "KeyI") {
+        e.preventDefault();
+        setShowInfo((s) => !s);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -280,35 +355,81 @@ export default function PhotoDetail({
   // A slide: the full photo fitted, with its thumbnail as an instant placeholder.
   const slide = (i: number) => {
     const p = photos[i];
-    if (!p) return <div className="w-screen h-screen shrink-0" />;
-    const r = fitRect(p, vw, vh);
+    if (!p)
+      return (
+        <div className="h-screen shrink-0" style={{ width: contentW }} />
+      );
+    const r = fitRect(p, contentW, vh);
     // Only the current slide zooms/pans. Keep an identity transform on it even
     // when not zoomed so toggling animates the scale smoothly; panning drags
     // skip the transition so the image tracks the cursor.
     const isCurrent = i === index;
     const z = isCurrent && zoomed;
-    return (
-      <div className="w-screen h-screen shrink-0 relative" key={p.id}>
+    const geom = {
+      left: r.left,
+      top: r.top,
+      width: r.width,
+      height: r.height,
+    };
+    // Geometry transition mirrors the photo path so the info panel nudge glides.
+    const geomTransition = isCurrent
+      ? `left ${NUDGE}, top ${NUDGE}, width ${NUDGE}, height ${NUDGE}`
+      : "none";
+
+    let media: JSX.Element;
+    if (isVideo(p)) {
+      // The current clip is a real <video> the scrub bar drives; neighbors stay
+      // as their poster frame so swiping previews them without extra decoders.
+      media = isCurrent ? (
+        <video
+          ref={setVideoEl}
+          src={photoUrl(p.id)}
+          poster={thumbUrl(p.id)}
+          autoPlay
+          playsInline
+          className="absolute object-contain"
+          style={{ ...geom, transition: geomTransition }}
+        />
+      ) : (
+        <img
+          src={thumbUrl(p.id)}
+          alt=""
+          draggable={false}
+          className="absolute object-contain"
+          style={{ ...geom, transition: geomTransition }}
+        />
+      );
+    } else {
+      media = (
         <img
           src={photoUrl(p.id)}
           alt=""
           draggable={false}
           className="absolute object-contain"
           style={{
-            left: r.left,
-            top: r.top,
-            width: r.width,
-            height: r.height,
+            ...geom,
             transform: isCurrent
               ? `translate(${z ? pan.x : 0}px, ${z ? pan.y : 0}px) scale(${z ? ZOOM : 1})`
               : undefined,
+            // Current image: animate both the zoom transform and, when the info
+            // panel nudges it, the fitted geometry. Skip while actively panning.
             transition:
               isCurrent && !(zoomed && dragging.current)
-                ? "transform 220ms cubic-bezier(0.2,0,0,1)"
+                ? `transform 220ms cubic-bezier(0.2,0,0,1), left ${NUDGE}, top ${NUDGE}, width ${NUDGE}, height ${NUDGE}`
                 : "none",
             cursor: zoomed && isCurrent ? "grab" : undefined,
           }}
         />
+      );
+    }
+
+    return (
+      <div
+        className="h-screen shrink-0 relative"
+        key={p.id}
+        style={{ width: contentW, transition: `width ${NUDGE}` }}
+      >
+        {media}
       </div>
     );
   };
@@ -334,7 +455,8 @@ export default function PhotoDetail({
       {phase !== "opening" && (
         <>
           <div
-            className="absolute inset-0 overflow-hidden"
+            className="absolute left-0 top-0 bottom-0 overflow-hidden"
+            style={{ right: showInfo ? INFO_WIDTH : 0, transition: `right ${NUDGE}` }}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -345,7 +467,6 @@ export default function PhotoDetail({
             <div
               ref={trackRef}
               className="flex h-full"
-              style={{ transform: `translateX(${-vw}px)` }}
               onTransitionEnd={onTrackTransitionEnd}
             >
               {slide(index - 1)}
@@ -357,8 +478,12 @@ export default function PhotoDetail({
           {/* Top controls: info + back-to-grid, in a frosted pill like the zoom
               stepper. Offset below the window title bar. */}
           <div
-            className="absolute right-3 z-10 flex items-center gap-1 rounded-full frosted-glass px-1.5 py-1"
-            style={{ top: "calc(var(--titlebar-height, 36px) + 8px)" }}
+            className="absolute z-30 flex items-center gap-1 rounded-full frosted-glass px-1.5 py-1"
+            style={{
+              top: "calc(var(--titlebar-height, 36px) + 8px)",
+              right: (showInfo ? INFO_WIDTH : 0) + 12,
+              transition: `right ${NUDGE}`,
+            }}
           >
             <button
               type="button"
@@ -378,22 +503,42 @@ export default function PhotoDetail({
             </button>
           </div>
 
-          {showInfo && (
+          {/* Docked info panel: slides in from the right and claims its width,
+              which shrinks the photo area (above) to match. */}
+          <div
+            className="absolute right-0 top-0 bottom-0 z-20"
+            style={{
+              width: INFO_WIDTH,
+              transform: showInfo ? "translateX(0)" : "translateX(100%)",
+              transition: `transform ${NUDGE}`,
+              pointerEvents: showInfo ? "auto" : "none",
+            }}
+            aria-hidden={!showInfo}
+          >
+            <InfoPopover photo={photo} onSearchPerson={onSearchPerson} />
+          </div>
+
+          {/* Floating scrub controls for the current video, centered over the
+              photo area and sitting just above the filmstrip. */}
+          {currentIsVideo && (
             <div
-              className="absolute right-3 z-20"
-              style={{ top: "calc(var(--titlebar-height, 36px) + 48px)" }}
+              className="absolute z-30 flex justify-center"
+              style={{
+                left: 0,
+                right: showInfo ? INFO_WIDTH : 0,
+                bottom: 96,
+                transition: `right ${NUDGE}`,
+              }}
             >
-              <InfoPopover photo={photo} photoRect={target} />
+              <VideoScrubBar video={videoEl} />
             </div>
           )}
 
           <Filmstrip
             photos={photos}
             current={index}
-            onPick={(i) => {
-              setShowInfo(false);
-              setIndex(i);
-            }}
+            rightInset={showInfo ? INFO_WIDTH : 0}
+            onPick={(i) => setIndex(i)}
           />
         </>
       )}
@@ -425,17 +570,21 @@ export default function PhotoDetail({
               transition: "opacity 260ms ease",
             }}
           />
-          <img
-            src={photoUrl(photos[startIndex].id)}
-            alt=""
-            draggable={false}
-            onLoad={() => setFullLoaded(true)}
-            className="hero-img object-contain"
-            style={{
-              opacity: fullLoaded ? 1 : 0,
-              transition: "opacity 260ms ease",
-            }}
-          />
+          {/* Videos have no full still to crossfade to; the thumbnail morphs
+              into place and the real <video> takes over once the view opens. */}
+          {!startIsVideo && (
+            <img
+              src={photoUrl(photos[startIndex].id)}
+              alt=""
+              draggable={false}
+              onLoad={() => setFullLoaded(true)}
+              className="hero-img object-contain"
+              style={{
+                opacity: fullLoaded ? 1 : 0,
+                transition: "opacity 260ms ease",
+              }}
+            />
+          )}
         </div>
       )}
     </div>

@@ -87,27 +87,22 @@ backups); subsequent runs are incremental and only process new or removed files.
 The goal is to turn a flat camera roll into a library you can actually search by
 who, what, and where. Roughly in order:
 
-### 1. Videos and an Albums tab
-Bring videos into the same grid experience alongside photos, and add an
-**Albums** tab that collects photos, videos, and GIFs together. The grid stops
-being photos-only and becomes the whole roll.
-
-### 2. People (face recognition)
+### 1. People (face recognition)
 Run images through a face-recognition model during indexing to detect
 **persistent faces** across the library. Cluster recurring faces into "people"
 in the index so you can open an album for a single person and see every photo
 they appear in.
 
-### 3. Text in images (OCR)
+### 2. Text in images (OCR)
 Index images with OCR so we know which photos contain text. This powers a
 **"Has text"** album (screenshots, signs, documents, whiteboards) and feeds the
 search index so text inside a photo becomes findable.
 
-### 4. Location and metadata
+### 3. Location and metadata
 Index by **capture location** (GPS from EXIF) and other metadata fields, so
 photos can be grouped and filtered by place, device, date range, and similar.
 
-### 5. Unified search
+### 4. Unified search
 Tie People, OCR text, and location together into one **comprehensive search** so
 a single natural query spans all of them. The target experience is typing
 something like:

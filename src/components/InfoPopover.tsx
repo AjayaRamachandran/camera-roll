@@ -1,22 +1,23 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, HelpCircle, Search, User } from "lucide-react";
 
-import { Photo, photoUrl } from "@/lib/photoApi";
-
-/** Screen rect (viewport coords) of the photo as drawn in the detail view. */
-export interface PhotoRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
+import {
+  formatDuration,
+  getPeople,
+  getPhotoFaces,
+  isVideo,
+  mergePeople,
+  Person,
+  Photo,
+  PhotoFace,
+  photoFaceUrl,
+} from "@/lib/photoApi";
 
 interface InfoPopoverProps {
   photo: Photo;
-  /** Where the photo is rendered on screen, so the glass can blur a copy of it
-      that lines up exactly with what is behind the panel. */
-  photoRect: PhotoRect;
+  /** Filter the gallery to a person (closes the viewer and runs the search). */
+  onSearchPerson?: (name: string) => void;
 }
 
 /** Pull the file name off an absolute Windows path. */
@@ -39,38 +40,81 @@ function formatTaken(iso: string): string {
 }
 
 /** A labeled metadata row. Value uses Google Sans Code (technical values). */
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  className?: any;
+}) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[var(--frost-text-dim)] text-xs">{label}</span>
-      <span className="font-code text-[13px] text-[var(--frost-text)] break-words">
+      <span className="text-(--frost-text-dim) text-xs">{label}</span>
+      <span
+        className={
+          "text-[13px] text-(--frost-text) wrap-break-word " + className
+        }
+      >
         {value}
       </span>
     </div>
   );
 }
 
-/**
- * Metadata popover shown from the info icon in the detail view. Frosted panel,
- * a few capture fields, and the full path with a one-tap copy.
- */
-export default function InfoPopover({ photo, photoRect }: InfoPopoverProps) {
-  const [copied, setCopied] = useState(false);
+/** A circular crop of one face in the photo, with a neutral icon fallback. */
+function FaceAvatar({ photoId, index }: { photoId: string; index: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="grid h-14 w-14 place-items-center rounded-full bg-white/10 text-white/55">
+        <User size={20} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={photoFaceUrl(photoId, index)}
+      alt=""
+      draggable={false}
+      onError={() => setFailed(true)}
+      className="h-14 w-14 rounded-full object-cover"
+    />
+  );
+}
 
-  // Measure where the panel sits on screen so the blurred photo copy (which is
-  // positioned in viewport coordinates) can be offset into the panel's local
-  // space and line up pixel-for-pixel with the real photo behind it.
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [panelPos, setPanelPos] = useState({ left: 0, top: 0 });
-  useLayoutEffect(() => {
-    const measure = () => {
-      const r = panelRef.current?.getBoundingClientRect();
-      if (r) setPanelPos({ left: r.left, top: r.top });
+/**
+ * Metadata panel docked on the right of the detail view. Shows the people found
+ * in the photo (click a face to see all their photos; faces that still need
+ * sorting carry a question mark you can use to file them under a known person),
+ * then the capture fields and the full path with a one-tap copy.
+ */
+export default function InfoPopover({ photo, onSearchPerson }: InfoPopoverProps) {
+  const [copied, setCopied] = useState(false);
+  const [faces, setFaces] = useState<PhotoFace[] | null>(null);
+
+  // The face whose "?" badge was clicked, plus where to anchor the popover.
+  const [assignFor, setAssignFor] = useState<{
+    face: PhotoFace;
+    top: number;
+    right: number;
+  } | null>(null);
+  const [assignQuery, setAssignQuery] = useState("");
+  const [people, setPeople] = useState<Person[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFaces(null);
+    setAssignFor(null);
+    getPhotoFaces(photo.id)
+      .then((f) => !cancelled && setFaces(f))
+      .catch(() => !cancelled && setFaces([]));
+    return () => {
+      cancelled = true;
     };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [photo, photoRect]);
+  }, [photo.id]);
 
   const copyPath = async () => {
     try {
@@ -82,50 +126,103 @@ export default function InfoPopover({ photo, photoRect }: InfoPopoverProps) {
     }
   };
 
+  const openAssign = (face: PhotoFace, e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setAssignQuery("");
+    setAssignFor({ face, top: r.bottom + 6, right: window.innerWidth - r.right });
+    if (people === null) {
+      getPeople()
+        .then(setPeople)
+        .catch(() => setPeople([]));
+    }
+  };
+
+  // File the unknown face's whole cluster under the chosen person.
+  const assignTo = async (targetId: number) => {
+    if (!assignFor || busy) return;
+    setBusy(true);
+    try {
+      await mergePeople(assignFor.face.person_id, targetId);
+      setFaces(await getPhotoFaces(photo.id));
+      setPeople(null); // counts changed; reload next time
+    } catch {
+      /* leave as-is on failure */
+    } finally {
+      setBusy(false);
+      setAssignFor(null);
+    }
+  };
+
+  const q = assignQuery.trim().toLowerCase();
+  const matches = (people ?? []).filter((p) => p.name.toLowerCase().includes(q));
+
   return (
     <div
-      ref={panelRef}
-      className="frosted-panel relative overflow-hidden rounded-2xl p-4 w-80 text-[var(--frost-text)]"
+      className="h-full w-full overflow-y-auto px-5 pb-6 mt-7.5 text-(--frost-text) border-l border-white/[0.07]"
+      style={{ paddingTop: "16px" }}
     >
-      {/* Blurred copy of the photo, drawn at the same viewport position as the
-          real photo, then offset into panel-local space. `overflow: hidden` on
-          .frosted-panel clips it to the panel. The slight scale hides the soft
-          transparent halo blur leaves at the image edges. */}
-      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-        <img
-          src={photoUrl(photo.id)}
-          alt=""
-          draggable={false}
-          className="absolute max-w-none object-contain"
-          style={{
-            left: photoRect.left - panelPos.left,
-            top: photoRect.top - panelPos.top,
-            width: photoRect.width,
-            height: photoRect.height,
-            filter: "blur(28px) saturate(140%)",
-            transform: "scale(1.15)",
-          }}
-        />
-      </div>
-      {/* Frosted tint over the blurred photo: this is the "glass" color. */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        aria-hidden="true"
-        style={{ background: "rgba(58, 58, 64, 0.45)" }}
-      />
+      <h2 className="text-base font-medium mb-4">Photo details</h2>
 
-      <h2 className="relative text-sm font-medium mb-3">Photo details</h2>
+      {faces && faces.length > 0 && (
+        <div className="mb-5 flex flex-col gap-2">
+          <span className="text-(--frost-text-dim) text-xs">People</span>
+          <div className="flex flex-wrap gap-3">
+            {faces.map((f) => (
+              <div key={f.index} className="flex w-14 flex-col items-center gap-1">
+                <div className="relative">
+                  <button
+                    type="button"
+                    title={f.name}
+                    aria-label={`Show photos of ${f.name}`}
+                    onClick={() => onSearchPerson?.(f.name)}
+                    className="block rounded-full outline-none transition-transform hover:scale-[1.05] focus-visible:ring-2 focus-visible:ring-white/70"
+                  >
+                    <FaceAvatar photoId={photo.id} index={f.index} />
+                  </button>
 
-      <div className="relative flex flex-col gap-3">
+                  {!f.known && (
+                    <button
+                      type="button"
+                      aria-label="Sort this face"
+                      onClick={(e) => openAssign(f, e)}
+                      className="absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white ring-1 ring-white/40 transition-colors hover:bg-black/90"
+                    >
+                      <HelpCircle size={13} />
+                    </button>
+                  )}
+                </div>
+                {f.known && (
+                  <span className="w-full truncate text-center text-[11px] text-(--frost-text-dim)">
+                    {f.name}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3">
         <Field label="Name" value={fileName(photo.path)} />
         <Field label="Taken" value={formatTaken(photo.taken)} />
         <Field label="Dimensions" value={`${photo.width} x ${photo.height}`} />
-        <Field label="Kind" value={photo.ext.replace(".", "").toUpperCase()} />
+        <Field
+          label="Kind"
+          value={photo.ext.replace(".", "").toUpperCase()}
+          className="font-code"
+        />
+        {isVideo(photo) && photo.duration != null && (
+          <Field
+            label="Length"
+            value={formatDuration(photo.duration)}
+            className="font-code"
+          />
+        )}
 
         <div className="flex flex-col gap-1">
-          <span className="text-[var(--frost-text-dim)] text-xs">Location</span>
+          <span className="text-(--frost-text-dim) text-xs">Location</span>
           <div className="flex items-start gap-2">
-            <span className="font-code text-xs text-[var(--frost-text)] break-all flex-1">
+            <span className="font-code text-xs text-(--frost-text) break-all flex-1">
               {photo.path}
             </span>
             <button
@@ -138,6 +235,53 @@ export default function InfoPopover({ photo, photoRect }: InfoPopoverProps) {
           </div>
         </div>
       </div>
+
+      {/* Assign popover: pick a known person to file this face's cluster under. */}
+      {assignFor && (
+        <>
+          <div
+            className="fixed inset-0 z-[65]"
+            onClick={() => setAssignFor(null)}
+          />
+          <div
+            className="fixed z-[70] flex w-60 flex-col rounded-2xl frosted-glass font-sans"
+            style={{ top: assignFor.top, right: assignFor.right, maxHeight: "60vh" }}
+          >
+            <div className="flex items-center gap-2 px-3 pt-3 pb-2">
+              <Search size={15} className="text-white/50" />
+              <input
+                autoFocus
+                value={assignQuery}
+                onChange={(e) => setAssignQuery(e.target.value)}
+                placeholder="Find a person"
+                className="w-full bg-transparent text-sm text-white/90 outline-none placeholder:text-white/40"
+              />
+            </div>
+            <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
+              {people === null ? (
+                <p className="px-2 py-3 text-xs text-white/45">Loading...</p>
+              ) : matches.length === 0 ? (
+                <p className="px-2 py-3 text-xs text-white/45">No people found.</p>
+              ) : (
+                matches.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => assignTo(p.id)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-white/90 transition-colors hover:bg-white/10 disabled:opacity-50"
+                  >
+                    <span className="truncate">{p.name}</span>
+                    <span className="shrink-0 font-code text-xs text-white/40">
+                      {p.count}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

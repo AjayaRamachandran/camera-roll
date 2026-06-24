@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { IndexData, megatileUrl } from "@/lib/photoApi";
+import { IndexData, isVideo, megatileUrl } from "@/lib/photoApi";
+import PlayBadge from "./PlayBadge";
 import ZoomStepper from "./ZoomStepper";
 
 /** Screen rectangle of a single grid cell, used to animate the open transition. */
@@ -271,6 +272,39 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
     window.addEventListener("mouseup", onUp);
   };
 
+  // A small play marker overlaid on the bottom-left of every visible video
+  // cell. The mega-tiles are flat composed images, so videos are marked here in
+  // the DOM. These live inside the scaled container with the tiles, so they
+  // grow/shrink with the zoom animation instead of drifting.
+  const badgeSize = Math.max(12, Math.min(30, cellSize * 0.16));
+  const badgePad = Math.max(4, cellSize * 0.06);
+  const videoBadges: JSX.Element[] = [];
+  if (tileSize > 0) {
+    for (let row = firstRow; row <= lastRow; row++) {
+      if (row >= nTiles) break;
+      for (let cell = 0; cell < capacity; cell++) {
+        const photoIndex = row * capacity + cell;
+        if (photoIndex >= index.count) break;
+        const p = index.photos[photoIndex];
+        if (!p || !isVideo(p)) continue;
+        const cr = Math.floor(cell / grid);
+        const cc = cell % grid;
+        videoBadges.push(
+          <div
+            key={p.id}
+            className="pointer-events-none absolute"
+            style={{
+              left: cc * cellSize + badgePad,
+              top: row * tileSize + (cr + 1) * cellSize - badgeSize - badgePad,
+            }}
+          >
+            <PlayBadge size={badgeSize} />
+          </div>
+        );
+      }
+    }
+  }
+
   const tiles: JSX.Element[] = [];
   if (tileSize > 0) {
     for (let row = firstRow; row <= lastRow; row++) {
@@ -341,6 +375,7 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
           }}
         >
           {tiles}
+          {videoBadges}
         </div>
       </div>
 

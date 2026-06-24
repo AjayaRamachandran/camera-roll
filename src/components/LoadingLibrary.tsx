@@ -19,14 +19,14 @@ export default function LoadingLibrary({ status, error }: LoadingLibraryProps) {
       <div className="flex flex-col items-center gap-4 w-80 text-center">
         {error ? (
           <>
-            <p className="text-[var(--frost-text)] text-base">
+            <p className="text-(--frost-text) text-base">
               We could not open your photos
             </p>
-            <p className="text-[var(--frost-text-dim)] text-sm">{error}</p>
+            <p className="text-(--frost-text-dim) text-sm">{error}</p>
           </>
         ) : (
           <>
-            <p className="text-[var(--frost-text)] text-base">
+            <p className="text-(--frost-text) text-base">
               Getting your photos ready
             </p>
 
@@ -38,7 +38,7 @@ export default function LoadingLibrary({ status, error }: LoadingLibraryProps) {
             </div>
 
             {total > 0 && (
-              <p className="font-code text-xs text-[var(--frost-text-dim)]">
+              <p className="font-code text-xs text-(--frost-text-dim)">
                 {done} of {total}
               </p>
             )}

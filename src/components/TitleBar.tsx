@@ -44,7 +44,7 @@ function TitleBar({ title = `${ProgramData.name}` }: TitleBarProps) {
   }, []);
 
   return (
-    <div className="fixed inset-x-0 top-0 z-[100] flex h-[var(--titlebar-height)] select-none items-center border-b border-white/[0.06] bg-white/[0.02] font-sans">
+    <div className="fixed inset-x-0 top-0 z-100 flex h-(--titlebar-height) select-none items-center border-b border-white/6 bg-white/5 backdrop-blur-lg font-sans">
       {/* Full-width drag handle behind everything. Empty space drags the window. */}
       <div className="absolute inset-0 z-0" data-tauri-drag-region />
 
@@ -66,14 +66,14 @@ function TitleBar({ title = `${ProgramData.name}` }: TitleBarProps) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <button
-          className={`${controlButton} hover:bg-white/[0.08] hover:text-white/90`}
+          className={`${controlButton} hover:bg-white/8 hover:text-white/90`}
           onClick={() => appWindow.minimize()}
           aria-label="Minimize"
         >
           <Minus size={13} />
         </button>
         <button
-          className={`${controlButton} hover:bg-white/[0.08] hover:text-white/90`}
+          className={`${controlButton} hover:bg-white/8 hover:text-white/90`}
           onClick={() => appWindow.toggleMaximize()}
           aria-label={isMaximized ? "Restore" : "Maximize"}
         >

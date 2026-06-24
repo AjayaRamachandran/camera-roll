@@ -7,6 +7,8 @@ interface FilmstripProps {
   current: number;
   /** Jump to a photo immediately (no transition), per the design. */
   onPick: (index: number) => void;
+  /** Space to leave on the right (e.g. when the info panel is docked). */
+  rightInset?: number;
 }
 
 const ITEM = 56; // on-screen width of one filmstrip thumbnail (square)
@@ -16,7 +18,12 @@ const ITEM = 56; // on-screen width of one filmstrip thumbnail (square)
  * after; scrolling left/right or clicking jumps straight to that photo without
  * a transition. Items are virtualized so even a huge library stays light.
  */
-export default function Filmstrip({ photos, current, onPick }: FilmstripProps) {
+export default function Filmstrip({
+  photos,
+  current,
+  onPick,
+  rightInset = 0,
+}: FilmstripProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [viewport, setViewport] = useState(0);
@@ -78,8 +85,12 @@ export default function Filmstrip({ photos, current, onPick }: FilmstripProps) {
   return (
     <div
       ref={ref}
-      className="filmstrip absolute bottom-0 left-0 right-0"
-      style={{ height: ITEM }}
+      className="filmstrip absolute bottom-0 left-0"
+      style={{
+        height: ITEM,
+        right: rightInset,
+        transition: "right 340ms cubic-bezier(0.2,0,0,1)",
+      }}
       onPointerDown={() => (userScrolling.current = true)}
       onPointerUp={() => (userScrolling.current = false)}
     >

@@ -18,8 +18,8 @@ index_dir: "C:\\Users\\Ajaya\\OneDrive\\Pictures\\Indexes"
 # Must equal TILE_PX / smallest_grid so primary-level cells fit thumbnails
 # without upscaling. TILE_PX is rounded up to the LCM of all tile_grids, so
 # choose a value where thumb_size * tile_grids[0] is already that multiple
-# (e.g. 150 * 7 = 1050 = LCM(7,15,30) * 5).
-thumb_size: 150
+# (e.g. 300 * 7 = 2100 = LCM(7,15,30) * 10).
+thumb_size: 300
 
 # Mega-tile grid dimensions, one set of tiles per level. Lower numbers show
 # larger photos (fewer per screen); higher numbers pack more photos in. Each
@@ -28,3 +28,40 @@ tile_grids: [7, 15, 30]
 
 # JPEG quality for the generated thumbnails and mega-tiles (1-95).
 jpeg_quality: 80
+
+# Background indexing that runs after the main library is ready, without
+# blocking browsing. Today this groups the faces in your photos into people;
+# more passes (text, places) can be added later.
+secondary_index:
+  enabled: true
+  faces:
+    # Cosine distance (0..2) between face embeddings; at or below this counts as
+    # the same person. Higher is more forgiving (fewer separate people, more
+    # chance of lumping two people together). Tune for the ArcFace model in use.
+    similar_threshold: 0.55
+    # Max stored sample faces compared per known person before deciding (the "X"
+    # that keeps matching from growing with the album size).
+    max_samples_per_person: 5
+    # Longest edge (px) the original is downscaled to before face detection.
+    detection_input_size: 1024
+    # Detections below this confidence are ignored.
+    min_det_score: 0.6
+    # Folder holding the ONNX model files. Empty -> <index_dir>/models.
+    models_dir: ""
+    # Fewest photos a person must appear in to show up in the People view. Hides
+    # one-off clusters from strangers and stray detections.
+    min_people_count: 6
+    # Threads each face-model run may use. 1 keeps each photo on a single core so
+    # the worker can run many photos in parallel across cores instead. 0 lets the
+    # runtime decide (better when indexing one photo at a time).
+    ort_intra_op_threads: 1
+  worker:
+    # Pause between photos so the background pass stays out of the way.
+    work_sleep_ms: 10
+    # While the main library scan is running, the face pass yields and rechecks
+    # this often instead of competing for the CPU.
+    scan_yield_ms: 200
+    # Persist progress every N photos (and whenever the pass goes idle).
+    flush_every: 25
+    # Photos detected at once in the foreground (fast) mode. 0 = one per CPU core.
+    foreground_workers: 0

@@ -50,3 +50,37 @@ endpoint would then be exposed to the frontend by adding:
 
 1. a Rust proxy command in `src-tauri/src/commands.rs`,
 2. a typed wrapper in `src/lib/api.ts`.
+
+## Background face indexing (models)
+
+After the main library scan, `secondary_index.py` quietly groups the faces in
+your photos into people. It runs two ONNX models through `onnxruntime`
+(`faces.py`), with all pre/post-processing in numpy + Pillow (no OpenCV):
+
+1. a **face detector** that returns boxes plus five landmarks, and
+2. an **ArcFace recognizer** that turns each aligned face into a 512-d
+   embedding.
+
+These model files are not pip packages. Download them once and drop the two
+`.onnx` files into the models folder, which defaults to:
+
+```
+<index_dir>/models/
+```
+
+(`index_dir` is set in `config.yaml`; override the location with
+`secondary_index.faces.models_dir`.) The recommended pair is from InsightFace's
+`buffalo_l` pack:
+
+- detector: `det_10g.onnx` (SCRFD with landmarks)
+- recognizer: `w600k_r50.onnx` (ArcFace, 512-d)
+
+The engine identifies which file is which by inspecting each model (the
+recognizer has a single output), so exact filenames do not matter as long as
+both an SCRFD-style detector and an ArcFace recognizer are present. If the
+folder or models are missing, face indexing simply parks itself and reports the
+reason via `GET /index/secondary/status`; the rest of the app is unaffected.
+
+Tunables live under `secondary_index` in `config.yaml`: `similar_threshold`
+(how close two faces must be to count as the same person),
+`max_samples_per_person`, `detection_input_size`, and `min_det_score`.

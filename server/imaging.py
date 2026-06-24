@@ -9,7 +9,11 @@ it touches, so keeping this free of FastAPI/uvicorn makes each worker start in
 """
 
 import hashlib
+import io
+import json
 import os
+import shutil
+import subprocess
 from datetime import datetime
 from functools import reduce
 from math import gcd
@@ -38,6 +42,23 @@ except Exception as exc:  # pragma: no cover
 # Formats the webview can show directly; everything else is converted on demand.
 WEB_DISPLAYABLE = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 IMAGE_EXTS = WEB_DISPLAYABLE | {".heic", ".heif", ".bmp", ".tif", ".tiff"}
+
+# Video formats we index. The thumbnail is a single extracted frame, so the grid
+# shows photos and videos side by side; the original streams to the viewer.
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"}
+# Everything the library scan picks up.
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
+
+# ffmpeg/ffprobe drive video frame extraction and metadata. They are external
+# binaries (not Python deps), so we resolve them once and skip videos cleanly if
+# they are missing rather than crashing the whole scan.
+FFMPEG = shutil.which("ffmpeg")
+FFPROBE = shutil.which("ffprobe")
+if not (FFMPEG and FFPROBE):
+    print("[backend] ffmpeg/ffprobe not found on PATH; videos will be skipped")
+
+# On Windows, keep the subprocess from flashing a console window for each call.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 EXIF_DATETIME_ORIGINAL = 36867
 EXIF_DATETIME_DIGITIZED = 36868
@@ -70,6 +91,24 @@ def load_config() -> dict:
     # `tile_grid`. Normalize to a sorted, de-duplicated ascending list.
     grids = cfg.get("tile_grids") or [cfg.get("tile_grid", 5)]
     cfg["tile_grids"] = sorted({int(g) for g in grids})
+
+    # Secondary (background) indexing. Fill every nested key so older config
+    # files keep working without edits and the subsystem never KeyErrors.
+    sec = cfg.setdefault("secondary_index", {})
+    sec.setdefault("enabled", True)
+    faces = sec.setdefault("faces", {})
+    faces.setdefault("similar_threshold", 0.45)
+    faces.setdefault("max_samples_per_person", 5)
+    faces.setdefault("detection_input_size", 1024)
+    faces.setdefault("min_det_score", 0.6)
+    faces.setdefault("models_dir", "")
+    faces.setdefault("min_people_count", 2)
+    faces.setdefault("ort_intra_op_threads", 1)
+    worker = sec.setdefault("worker", {})
+    worker.setdefault("work_sleep_ms", 10)
+    worker.setdefault("scan_yield_ms", 200)
+    worker.setdefault("flush_every", 25)
+    worker.setdefault("foreground_workers", 0)
     return cfg
 
 
@@ -136,10 +175,130 @@ def _exif_taken(exif) -> Optional[str]:
     return None
 
 
+def _square_thumb(img: "Image.Image") -> "Image.Image":
+    """Short side fits, then center-crop to a THUMB_SIZE square (shared recipe)."""
+    return ImageOps.fit(
+        img.convert("RGB"),
+        (THUMB_SIZE, THUMB_SIZE),
+        method=Image.BILINEAR,
+        centering=(0.5, 0.5),
+    )
+
+
+def _run_quiet(cmd: list[str]) -> "subprocess.CompletedProcess[bytes]":
+    return subprocess.run(cmd, capture_output=True, creationflags=_NO_WINDOW)
+
+
+def _probe_video(src: Path) -> dict:
+    """Duration (seconds) and capture time for a video, via ffprobe. Best effort."""
+    info: dict = {"duration": None, "creation_time": None}
+    if not FFPROBE:
+        return info
+    try:
+        proc = _run_quiet(
+            [
+                FFPROBE,
+                "-v", "error",
+                "-show_entries", "format=duration:format_tags=creation_time",
+                "-of", "json",
+                str(src),
+            ]
+        )
+        if proc.returncode == 0 and proc.stdout:
+            fmt = (json.loads(proc.stdout) or {}).get("format", {})
+            dur = fmt.get("duration")
+            if dur is not None:
+                info["duration"] = float(dur)
+            info["creation_time"] = (fmt.get("tags") or {}).get("creation_time")
+    except Exception:
+        pass
+    return info
+
+
+def _video_frame(src: Path, when: float) -> Optional["Image.Image"]:
+    """Decode a single frame at `when` seconds as a Pillow image (auto-rotated)."""
+    if not FFMPEG:
+        return None
+    try:
+        proc = _run_quiet(
+            [
+                FFMPEG,
+                "-ss", f"{max(0.0, when):.3f}",
+                "-i", str(src),
+                "-frames:v", "1",
+                "-f", "image2pipe",
+                "-vcodec", "mjpeg",
+                "-",
+            ]
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        return Image.open(io.BytesIO(proc.stdout))
+    except Exception:
+        return None
+
+
+def make_video_thumbnail(src_str: str) -> Optional[dict]:
+    """Index one video: a frame becomes its thumbnail, ffprobe gives metadata."""
+    src = Path(src_str)
+    ext = src.suffix.lower()
+    meta = _probe_video(src)
+    duration = meta["duration"]
+
+    # Grab a representative frame: a touch into the clip, never past its end.
+    seek = 1.0 if duration is None else min(1.0, duration * 0.25)
+    frame = _video_frame(src, seek) or _video_frame(src, 0.0)
+    if frame is None:
+        print(f"[backend] skip unreadable video {src}")
+        return None
+
+    try:
+        # Frame is already display-oriented, so its size is the true aspect.
+        width, height = frame.size
+        thumb = _square_thumb(frame)
+    except Exception as exc:
+        print(f"[backend] skip unreadable video {src}: {exc}")
+        return None
+
+    pid = photo_id(src_str)
+    thumb.save(THUMB_DIR / f"{pid}.jpg", "JPEG", quality=JPEG_QUALITY)
+
+    taken = meta["creation_time"]
+    if taken:
+        # ffmpeg stamps UTC like "2026-06-12T15:41:02.000000Z"; normalize to ISO.
+        try:
+            taken = (
+                datetime.fromisoformat(taken.replace("Z", "+00:00"))
+                .replace(tzinfo=None)
+                .isoformat()
+            )
+            taken_source = "meta"
+        except ValueError:
+            taken = None
+    if not taken:
+        taken = datetime.fromtimestamp(src.stat().st_mtime).isoformat()
+        taken_source = "file"
+
+    return {
+        "id": pid,
+        "path": src_str,
+        "thumb": f"{pid}.jpg",
+        "kind": "video",
+        "duration": duration,
+        "width": width,
+        "height": height,
+        "taken": taken,
+        "taken_source": taken_source,
+        "ext": ext,
+    }
+
+
 def make_thumbnail(src_str: str) -> Optional[dict]:
     """Generate one square center-cropped thumbnail. Runs in a worker process."""
     src = Path(src_str)
     ext = src.suffix.lower()
+    if ext in VIDEO_EXTS:
+        return make_video_thumbnail(src_str)
     try:
         with Image.open(src) as img:
             ow, oh = img.size  # original dims, before any decode
@@ -152,14 +311,8 @@ def make_thumbnail(src_str: str) -> Optional[dict]:
                 img.draft("RGB", (DRAFT_TARGET, DRAFT_TARGET))
 
             img = ImageOps.exif_transpose(img)
-            # "Crop in": short side fits, then center-crop to a square. BILINEAR
-            # is plenty at this size and much faster than LANCZOS.
-            thumb = ImageOps.fit(
-                img.convert("RGB"),
-                (THUMB_SIZE, THUMB_SIZE),
-                method=Image.BILINEAR,
-                centering=(0.5, 0.5),
-            )
+            # "Crop in": short side fits, then center-crop to a square.
+            thumb = _square_thumb(img)
     except Exception as exc:
         print(f"[backend] skip unreadable image {src}: {exc}")
         return None
@@ -182,12 +335,49 @@ def make_thumbnail(src_str: str) -> Optional[dict]:
         "id": pid,
         "path": src_str,
         "thumb": f"{pid}.jpg",
+        "kind": "photo",
         "width": width,
         "height": height,
         "taken": taken,
         "taken_source": taken_source,
         "ext": ext,
     }
+
+
+def load_for_analysis(src_str: str, max_edge: int) -> Optional["Image.Image"]:
+    """Decode a full image for analysis (e.g. face detection), downscaled.
+
+    Unlike `make_thumbnail`, this keeps the whole frame (no square center-crop),
+    so faces near the edges are not clipped. The longest edge is reduced to at
+    most `max_edge` px, EXIF orientation is applied, and the result is RGB.
+    Returns None for videos or anything that fails to decode.
+    """
+    src = Path(src_str)
+    ext = src.suffix.lower()
+    if ext in VIDEO_EXTS:
+        return None
+    try:
+        with Image.open(src) as img:
+            # Let the JPEG decoder emit a reduced-scale image when the original
+            # is much larger than we need; cheap and lossless for our purposes.
+            if ext in (".jpg", ".jpeg"):
+                img.draft("RGB", (max_edge, max_edge))
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            w, h = img.size
+            longest = max(w, h)
+            if longest > max_edge:
+                scale = max_edge / longest
+                img = img.resize(
+                    (max(1, round(w * scale)), max(1, round(h * scale))),
+                    Image.BILINEAR,
+                )
+            else:
+                # Force the lazy decode now, before the file handle closes.
+                img.load()
+            return img
+    except Exception as exc:
+        print(f"[backend] cannot open {src} for analysis: {exc}")
+        return None
 
 
 def compose_tile(payload) -> None:
