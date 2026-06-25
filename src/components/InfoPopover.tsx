@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 import { Check, Copy, HelpCircle, Search, User } from "lucide-react";
 
+import Refract from "./Refract";
+
 import {
   formatDuration,
   getPeople,
@@ -39,7 +41,7 @@ function formatTaken(iso: string): string {
   });
 }
 
-/** A labeled metadata row. Value uses Google Sans Code (technical values). */
+/** A labeled metadata row. Value uses the monospace face (technical values). */
 function Field({
   label,
   value,
@@ -243,8 +245,8 @@ export default function InfoPopover({ photo, onSearchPerson }: InfoPopoverProps)
             className="fixed inset-0 z-[65]"
             onClick={() => setAssignFor(null)}
           />
-          <div
-            className="fixed z-[70] flex w-60 flex-col rounded-2xl frosted-glass font-sans"
+          <Refract
+            className="fixed z-[70] flex w-60 flex-col rounded-2xl font-sans"
             style={{ top: assignFor.top, right: assignFor.right, maxHeight: "60vh" }}
           >
             <div className="flex items-center gap-2 px-3 pt-3 pb-2">
@@ -279,7 +281,7 @@ export default function InfoPopover({ photo, onSearchPerson }: InfoPopoverProps)
                 ))
               )}
             </div>
-          </div>
+          </Refract>
         </>
       )}
     </div>

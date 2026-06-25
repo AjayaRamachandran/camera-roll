@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liquid glass dropdown</title>
+<style>
+  @property --gb { syntax: '<number>'; inherits: false; initial-value: 1; }
+  :root {
+    color-scheme: dark;
+    --spring-pos:    cubic-bezier(.28,1.36,.52,1);
+    --spring-bounds: cubic-bezier(.5,0,0,1);
+    /* master animation duration — lower = snappier. Sub-durations scale off it. */
+    --anim: 0.33s;
+  }
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; min-height: 100vh;
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", monospace;
+    color: #e8e6df; background: #07080c;
+    display: grid; place-items: center; overflow-x: hidden;
+  }
+
+  .stage {
+    position: relative; width: 100%; max-width: 820px;
+    aspect-ratio: 16 / 11; border-radius: 18px; overflow: hidden;
+    background:
+      radial-gradient(120% 120% at 12% 18%, #ff5d73 0%, transparent 42%),
+      radial-gradient(120% 120% at 88% 22%, #ffc24b 0%, transparent 40%),
+      radial-gradient(140% 140% at 50% 110%, #4d6bff 0%, transparent 55%),
+      #0b0d14;
+  }
+  .stage::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.16) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,.16) 1px, transparent 1px);
+    background-size: 34px 34px;
+    mask-image: radial-gradient(120% 120% at 50% 40%, #000 55%, transparent 100%);
+  }
+  .bigtype {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-weight: 800; font-size: clamp(48px, 13vw, 128px);
+    letter-spacing: -0.04em; color: #f5f3ec;
+    text-shadow: 0 2px 30px rgba(0,0,0,.35); user-select: none;
+  }
+
+  .glass {
+    --blur: 3px; --sa: 0.10; --gb: 1; --nx: 0px; --ny: 0px; --sc: 1;
+    position: absolute; left: 0; top: 0;
+    width: 64px; height: 64px; border-radius: 32px;
+    cursor: pointer; user-select: none; overflow: hidden;
+
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(2) brightness(var(--gb)) url(#refract);
+            backdrop-filter: blur(var(--blur)) saturate(2) brightness(var(--gb)) url(#refract);
+
+    background: rgba(38,40,46, var(--sa));
+    border-top: 1px solid rgba(255,255,255,0.55);
+    border-bottom: 1px solid rgba(255,255,255,0.55);
+    border-left: 0; border-right: 0;
+    box-shadow: 0 26px 70px rgba(0,0,0,0.28);
+
+    transform: translate(-50%, -50%) translate(var(--nx), var(--ny)) scale(var(--sc));
+    transition: transform calc(var(--anim) * .36) ease, --gb calc(var(--anim) * .24) ease;  /* hover; morph arms the spring */
+  }
+  .glass.morph {
+    transition:
+      left   var(--anim) var(--spring-pos),
+      top    var(--anim) var(--spring-pos),
+      width  var(--anim) var(--spring-bounds),
+      height var(--anim) var(--spring-bounds),
+      border-radius var(--anim) var(--spring-bounds),
+      transform calc(var(--anim) * .36) ease,
+      --gb calc(var(--anim) * .24) ease;
+  }
+  .glass::after {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit;
+    pointer-events: none; box-shadow: 0 1px 4px rgba(255,255,255,0.45);
+  }
+  .glass.open { width: 256px; height: 300px; border-radius: 26px; }
+
+  .icon {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    filter: blur(0px);
+    transition: opacity calc(var(--anim) * .6) ease, filter calc(var(--anim) * .6) ease; pointer-events: none;
+  }
+  .icon span {
+    display: block; width: 22px; height: 2px; border-radius: 2px;
+    background: rgba(255,255,255,.9); margin: 3px 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  }
+  .glass.open .icon { opacity: 0; filter: blur(6px); }
+
+  .menu {
+    position: absolute; inset: 0; padding: 14px;
+    display: flex; flex-direction: column; gap: 2px;
+    opacity: 0; transform: translateY(6px); filter: blur(6px);
+    pointer-events: none;
+    transition: opacity calc(var(--anim) * .6) ease, transform calc(var(--anim) * .6) var(--spring-pos), filter calc(var(--anim) * .6) ease;
+  }
+  .glass.open .menu { opacity: 1; transform: none; filter: blur(0px); pointer-events: auto; }
+  .mhead {
+    font-size: 10px; letter-spacing: .24em; text-transform: uppercase;
+    color: rgba(255,255,255,.55); padding: 6px 10px 10px;
+  }
+  .mitem {
+    display: flex; align-items: center; gap: 11px;
+    padding: 10px 11px; border: 0; background: transparent;
+    color: #f3f1ea; font: inherit; font-size: 13px; text-align: left;
+    border-radius: 12px; cursor: pointer; width: 100%;
+    transition: background .14s ease;
+  }
+  .mitem:hover { background: rgba(255,255,255,.13); }
+  .mitem .dot {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    background: linear-gradient(135deg,#ff8aa0,#ffd27a);
+  }
+  .mitem:nth-child(3) .dot { background: linear-gradient(135deg,#8ad0ff,#9aa8ff); }
+  .mitem:nth-child(4) .dot { background: linear-gradient(135deg,#9affc4,#5ad0ff); }
+  .mitem:nth-child(5) .dot { background: linear-gradient(135deg,#ffb3b3,#ff7a7a); }
+
+  .panel {
+    margin-top: 24px; display: grid;
+    grid-template-columns: repeat(2, auto); gap: 12px 26px;
+    align-items: center; font-size: 13px; color: #b9b6ad;
+  }
+  .panel label { display: inline-flex; gap: 10px; align-items: center; }
+  input[type="range"] { width: 150px; accent-color: #ff5d73; }
+  output { min-width: 46px; color: #f5f3ec; }
+  #aVal { min-width: 132px; }
+
+  .note {
+    max-width: 580px; margin: 14px auto 40px; text-align: center;
+    font-size: 12px; line-height: 1.6; color: #6f6d67;
+  }
+  .fallback-warning {
+    display: none; margin-top: 16px; font-size: 12px; color: #ffb4b4;
+    max-width: 460px; text-align: center; line-height: 1.5;
+  }
+  @supports not (backdrop-filter: url(#refract)) { .fallback-warning { display: block; } }
+</style>
+</head>
+<body>
+
+  <div class="stage">
+    <div class="bigtype">REFRACT</div>
+    <div class="glass" id="glass">
+      <div class="icon"><div><span></span><span></span><span></span></div></div>
+      <nav class="menu">
+        <div class="mhead">Account</div>
+        <button class="mitem"><i class="dot"></i> Profile</button>
+        <button class="mitem"><i class="dot"></i> Settings</button>
+        <button class="mitem"><i class="dot"></i> Notifications</button>
+        <button class="mitem"><i class="dot"></i> Sign out</button>
+      </nav>
+    </div>
+  </div>
+
+  <div class="panel">
+    <label>pos X
+      <input id="px" type="range" min="0" max="100" value="72">
+      <output id="pxVal">72</output>
+    </label>
+    <label>pos Y
+      <input id="py" type="range" min="0" max="100" value="20">
+      <output id="pyVal">20</output>
+    </label>
+    <label>optical strength
+      <input id="a" type="range" min="10" max="300" value="80">
+      <output id="aVal">0.080</output>
+    </label>
+    <label>opacity
+      <input id="op" type="range" min="0" max="60" value="10">
+      <output id="opVal">0.10</output>
+    </label>
+    <label>blur
+      <input id="bl" type="range" min="0" max="20" value="3">
+      <output id="blVal">3px</output>
+    </label>
+  </div>
+
+  <p class="fallback-warning">
+    Your browser doesn't honor SVG filters as <code>backdrop-filter</code>
+    (Safari / Firefox); refraction is Chromium-only.
+  </p>
+
+  <p class="note">
+    Click the orb to spring open toward the lower-left. The displacement map
+    rebuilds every reflow frame, so the refraction tracks the bouncing size and
+    radius. Position with the X / Y sliders; hover to brighten.
+  </p>
+
+  <svg width="0" height="0" style="position:absolute">
+    <filter id="refract" x="-30%" y="-30%" width="160%" height="160%"
+            color-interpolation-filters="sRGB">
+      <feImage id="mapImage" x="0" y="0" width="64" height="64"
+               preserveAspectRatio="none" result="map"/>
+      <feDisplacementMap id="disp" in="SourceGraphic" in2="map"
+               scale="64" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+
+<script>
+  const glass   = document.getElementById('glass');
+  const stage   = document.querySelector('.stage');
+  const feImage = document.getElementById('mapImage');
+  const disp    = document.getElementById('disp');
+  const clamp255 = v => v<0?0:v>255?255:v;
+
+
+  const CLOSED = { w: 64,  h: 64  };
+  const OPEN   = { w: 256, h: 300 };
+  let open = false, morphT = 0;
+  let baseBlur = 3;
+
+  // master duration (ms) read from CSS --anim, so JS timing tracks the same knob
+  const ANIM_MS = (parseFloat(getComputedStyle(document.documentElement)
+                    .getPropertyValue('--anim')) || 0.33) * 1000;
+
+  // Blur is proportional to sqrt of the object's bounds (same "frostedness" =>
+  // more blur when bigger), scaled by the base-blur slider. Ref length = closed orb.
+  function applyBlur(W, H) {
+    if (W == null) { const r = glass.getBoundingClientRect(); W = r.width; H = r.height; }
+    glass.style.setProperty('--blur', (baseBlur * Math.sqrt((W + H) / 2 / 64)).toFixed(2) + 'px');
+  }
+
+  // ---- displacement map for the element's current box ----
+  function buildMap(W, H, b, a) {
+    const MAXD = 160;
+    const sc = Math.min(1, MAXD / Math.max(W, H));
+    const mw = Math.max(2, Math.round(W * sc));
+    const mh = Math.max(2, Math.round(H * sc));
+    const cv = document.createElement('canvas');
+    cv.width = mw; cv.height = mh;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(mw, mh);
+    const data = img.data;
+
+    const g = n => { const t = a * (b - n); return Math.exp(t) - (t + 1); };
+    const MAGIC = 400;
+    const gRef = (Math.exp(a * b) - (a * b + 1)) || 1e-6;
+    const coeff = MAGIC * a / gRef;
+
+    const dxA = new Float32Array(mw * mh);
+    const dyA = new Float32Array(mw * mh);
+    let maxAbs = 1e-4;
+
+    for (let j = 0; j < mh; j++) {
+      for (let i = 0; i < mw; i++) {
+        const cxp = (i + 0.5) * (W / mw);
+        const cyp = (j + 0.5) * (H / mh);
+        const dl = cxp, dr = W - cxp, dt = cyp, db = H - cyp;
+        const cornerX = cxp < b || cxp > W - b;
+        const cornerY = cyp < b || cyp > H - b;
+
+        let n, nx = 0, ny = 0, valid = true;
+        if (cornerX && cornerY) {
+          const ccx = cxp < b ? b : W - b;
+          const ccy = cyp < b ? b : H - b;
+          const vx = cxp - ccx, vy = cyp - ccy;
+          const rr = Math.hypot(vx, vy);
+          if (rr > b) { valid = false; n = b; }
+          else if (rr < 1e-6) { n = b; }
+          else { n = b - rr; nx = -vx / rr; ny = -vy / rr; }
+        } else {
+          const m = Math.min(dl, dr, dt, db); n = m;
+          if (m === dl) nx = 1; else if (m === dr) nx = -1;
+          else if (m === dt) ny = 1; else ny = -1;
+        }
+
+        let dx = 0, dy = 0;
+        if (valid && n < b) { const off = coeff * g(n); dx = nx * off; dy = ny * off; }
+        const k = j * mw + i; dxA[k] = dx; dyA[k] = dy;
+        if (Math.abs(dx) > maxAbs) maxAbs = Math.abs(dx);
+        if (Math.abs(dy) > maxAbs) maxAbs = Math.abs(dy);
+      }
+    }
+    const scale = 2 * maxAbs;
+    for (let k = 0; k < mw * mh; k++) {
+      data[k*4]   = clamp255(Math.round(255 * (0.5 + dxA[k] / scale)));
+      data[k*4+1] = clamp255(Math.round(255 * (0.5 + dyA[k] / scale)));
+      data[k*4+2] = 128; data[k*4+3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return { uri: cv.toDataURL(), scale };
+  }
+
+  function regenMap() {
+    const r = glass.getBoundingClientRect();
+    const W = Math.max(2, Math.round(r.width));
+    const H = Math.max(2, Math.round(r.height));
+    const b = parseFloat(getComputedStyle(glass).borderTopLeftRadius) || 0.001;
+    const a = +document.getElementById('a').value / 1000;
+    const { uri, scale } = buildMap(W, H, b, a);
+    feImage.setAttribute('width', W);
+    feImage.setAttribute('height', H);
+    feImage.setAttribute('href', uri);
+    feImage.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', uri);
+    disp.setAttribute('scale', scale.toFixed(2));
+    applyBlur(W, H);
+  }
+  let pending = false;
+  function scheduleMap() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; regenMap(); });
+  }
+  new ResizeObserver(scheduleMap).observe(glass);
+
+  // ---- placement: anchor = top-right corner, so it opens down-left ----
+  const pxEl = document.getElementById('px'), pxVal = document.getElementById('pxVal');
+  const pyEl = document.getElementById('py'), pyVal = document.getElementById('pyVal');
+  function anchor() {
+    const SW = stage.clientWidth, SH = stage.clientHeight;
+    const ax = OPEN.w + (SW - OPEN.w) * (+pxEl.value / 100);     // right edge
+    const ay = 0 + (SH - OPEN.h) * (+pyEl.value / 100);          // top edge
+    return { ax, ay };
+  }
+  function applyGeom() {
+    const { ax, ay } = anchor();
+    const s = open ? OPEN : CLOSED;
+    glass.style.left = (ax - s.w / 2) + 'px';   // centre x (rides --spring-pos)
+    glass.style.top  = (ay + s.h / 2) + 'px';   // centre y
+  }
+  function setOpen(v) {
+    open = v;
+    glass.classList.add('morph');
+    glass.classList.toggle('open', v);
+    applyGeom();
+    clearTimeout(morphT);
+    morphT = setTimeout(() => glass.classList.remove('morph'), ANIM_MS + 80);
+  }
+
+  applyGeom();
+  requestAnimationFrame(regenMap);
+  window.addEventListener('resize', () => { applyGeom(); scheduleMap(); });
+
+  // ---- sliders ----
+  pxEl.addEventListener('input', () => { pxVal.value = pxEl.value; applyGeom(); });
+  pyEl.addEventListener('input', () => { pyVal.value = pyEl.value; applyGeom(); });
+
+  const aEl  = document.getElementById('a'),  aVal  = document.getElementById('aVal');
+  const opEl = document.getElementById('op'), opVal = document.getElementById('opVal');
+  const blEl = document.getElementById('bl'), blVal = document.getElementById('blVal');
+  aEl.addEventListener('input', () => {
+    const a = +aEl.value / 1000;
+    aVal.value = a.toFixed(3) + '  (' + Math.round(400 * a) + 'px rim)';
+    scheduleMap();
+  });
+  opEl.addEventListener('input', () => {
+    const o = +opEl.value / 100; opVal.value = o.toFixed(2);
+    glass.style.setProperty('--sa', o);
+  });
+  blEl.addEventListener('input', () => {
+    baseBlur = +blEl.value;
+    blVal.value = blEl.value + 'px';
+    applyBlur();
+  });
+  aEl.dispatchEvent(new Event('input'));
+
+  // ---- click to toggle ----
+  glass.addEventListener('click', e => {
+    if (e.target.closest('.mitem')) return;     // item handler closes it
+    setOpen(!open);
+  });
+  document.querySelectorAll('.mitem').forEach(it =>
+    it.addEventListener('click', () => setOpen(false)));
+  document.addEventListener('click', e => {
+    if (open && !glass.contains(e.target)) setOpen(false);
+  });
+
+  // ---- cursor-reactive hover ----
+  let pmPending = false, lastPM = null;
+  function updateHover(e) {
+    const r = glass.getBoundingClientRect();
+    const W = r.width, H = r.height;
+    const ndx = (e.clientX - r.left - W / 2) / (W / 2);   // -1..1 from centre
+    const ndy = (e.clientY - r.top  - H / 2) / (H / 2);
+    const dist = Math.min(1, Math.hypot(ndx, ndy));
+    const L = (W + H) / 2;
+
+    // hover expansion: inverse with size (small object pops ~7-10%, big ~1%)
+    const p = Math.min(0.10, Math.max(0.01, 4.5 / L));
+    // nudge toward the cursor so it leans into the click
+    const M = 6;
+    glass.style.setProperty('--nx', (ndx * M).toFixed(2) + 'px');
+    glass.style.setProperty('--ny', (ndy * M).toFixed(2) + 'px');
+    glass.style.setProperty('--sc', (1 + p).toFixed(4));
+    // brightness strongest at the centre, fading to none at the edge
+    glass.style.setProperty('--gb', (1 + 0.18 * (1 - dist)).toFixed(3));
+  }
+  glass.addEventListener('pointermove', e => {
+    lastPM = e;
+    if (pmPending) return;
+    pmPending = true;
+    requestAnimationFrame(() => { pmPending = false; updateHover(lastPM); });
+  });
+  glass.addEventListener('pointerleave', () => {
+    glass.style.setProperty('--nx', '0px');
+    glass.style.setProperty('--ny', '0px');
+    glass.style.setProperty('--sc', '1');
+    glass.style.setProperty('--gb', '1');
+  });
+</script>
+</body>
+</html>

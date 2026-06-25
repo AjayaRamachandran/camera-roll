@@ -1,8 +1,12 @@
 import { useEffect, useRef } from "react";
 
-import { Search, Users, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 import IndexingPill from "./IndexingPill";
+import PeoplePopover from "./PeoplePopover";
+import Refract from "./Refract";
+
+import { Person } from "@/lib/photoApi";
 
 interface GalleryControlsProps {
   /** Current text in the search field. */
@@ -15,8 +19,8 @@ interface GalleryControlsProps {
   onSubmit: () => void;
   /** Clear the search and collapse the field. */
   onClear: () => void;
-  /** Open the People view. */
-  onOpenPeople: () => void;
+  /** Filter the gallery to a person picked in the People popover. */
+  onPickPerson: (person: Person) => void;
 }
 
 /**
@@ -35,7 +39,7 @@ export default function GalleryControls({
   onSearchOpenChange,
   onSubmit,
   onClear,
-  onOpenPeople,
+  onPickPerson,
 }: GalleryControlsProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -49,22 +53,15 @@ export default function GalleryControls({
     "grid place-items-center rounded-full p-1.5 text-white/85 transition-colors hover:text-white";
 
   return (
-    <div className="pointer-events-none absolute top-3 right-7 z-30 flex items-center justify-end gap-2">
+    <div className="pointer-events-none absolute top-3 right-5 z-30 flex items-center justify-end gap-4">
       <IndexingPill />
 
-      <button
-        type="button"
-        aria-label="People"
-        onClick={onOpenPeople}
-        className="pointer-events-auto grid h-10 w-10 place-items-center rounded-full frosted-glass text-white/85 transition-colors hover:text-white"
-      >
-        <Users size={18} />
-      </button>
+      <PeoplePopover onPick={onPickPerson} />
 
-      {/* The search field: a frosted pill that starts as a circular button and
-          grows as the input widens. No overflow:hidden here, because WebView2
-          drops the backdrop-filter when a frosted element clips. */}
-      <div className="pointer-events-auto flex h-10 items-center rounded-full frosted-glass px-1 font-sans">
+      {/* The search field: a glass pill that starts as a circular button and
+          grows as the input widens. Refract regenerates its refraction map as
+          the box grows, so the lensing tracks the expanding pill. */}
+      <Refract className="top-0.75 pointer-events-auto flex items-center rounded-full h-11 px-1.5 font-sans">
         <button
           type="button"
           aria-label={searchOpen ? "Search" : "Open search"}
@@ -84,7 +81,7 @@ export default function GalleryControls({
           }}
           placeholder="Search"
           tabIndex={searchOpen ? 0 : -1}
-          className="bg-transparent text-sm text-white/90 outline-none placeholder:text-white/40 transition-[width,opacity,margin] duration-300"
+          className="bg-transparent text-md text-white/90 outline-none placeholder:text-white/40 transition-[width,opacity,margin] duration-400 ease-[cubic-bezier(0.17,1.5,0.5,1)]"
           style={{
             width: searchOpen ? 176 : 0,
             opacity: searchOpen ? 1 : 0,
@@ -102,7 +99,7 @@ export default function GalleryControls({
             <X size={16} />
           </button>
         )}
-      </div>
+      </Refract>
     </div>
   );
 }

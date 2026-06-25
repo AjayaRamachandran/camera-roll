@@ -1,4 +1,5 @@
 import { SecondaryStatus, formatEta } from "@/lib/photoApi";
+import Refract from "./Refract";
 
 interface FaceIndexingScreenProps {
   status: SecondaryStatus | null;
@@ -39,13 +40,14 @@ export default function FaceIndexingScreen({
         )}
         {eta && <p className="text-sm text-(--frost-text-dim)">{eta}</p>}
 
-        <button
+        <Refract
+          as="button"
           type="button"
           onClick={onRunInBackground}
-          className="mt-2 rounded-full frosted-glass px-4 py-2 text-sm text-white/90 transition-colors hover:text-white"
+          className="mt-2 rounded-full px-4 py-2 text-sm text-white/90 hover:text-white"
         >
           Run in background
-        </button>
+        </Refract>
       </div>
     </div>
   );

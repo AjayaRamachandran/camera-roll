@@ -1,29 +1,12 @@
 /*
  * Photo browsing surfaces: grid, detail view, filmstrip, and the metadata
  * popover. Layout is mostly Tailwind in the components; this file holds the
- * genuinely structural / bespoke pieces (the frosted panel recipe, the hero
- * morph layer, and the filmstrip scroll behavior).
+ * genuinely structural / bespoke pieces (the hero morph layer and the filmstrip
+ * scroll behavior).
+ *
+ * The glass material for floating chrome and panels lives in refract.css and is
+ * applied via the <Refract> component, not a class here.
  */
-
-/* Traditional glass: a real backdrop-filter blur of whatever is behind. Used
-   for all floating chrome and panels (zoom stepper, detail top controls, info
-   popover). Apple dark-mode glass material: a translucent light gray, a bright
-   specular border on the top edge, and a soft diffuse shadow.
-
-   No `overflow: hidden`: WebView2 drops the whole backdrop-filter layer when it
-   clips. The element's own border-radius clips the blur on its own. */
-.frosted-glass {
-  background: rgba(44, 44, 49, 0.4);
-  backdrop-filter: blur(4px) saturate(300%);
-  -webkit-backdrop-filter: blur(4px) saturate(300%);
-  border-top: 1px solid rgba(255, 255, 255, 0.26);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
-  /* border-right: 2px solid rgba(0, 0, 0, 0.16);
-  border-left: 2px solid rgba(0, 0, 0, 0.16); */
-  box-shadow:
-    0 8px 28px rgba(0, 0, 0, 0.48);
-  filter: drop-shadow(0 0px 6px rgba(255, 255, 255, 0.3))
-}
 
 /* The hero element that grows from a grid cell into the full photo. It holds
    the thumbnail (cropped) and the full image (fitted) stacked, and crossfades

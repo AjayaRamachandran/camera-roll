@@ -419,8 +419,8 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
       )}
 
       {dateLabel && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-5 pb-8 bg-gradient-to-b from-black/45 to-transparent">
-          <span className="text-[var(--frost-text)] text-xl font-medium">
+        <div className="pointer-events-none absolute inset-x-0 top-0 px-5 pt-6 pb-8 bg-gradient-to-b from-black/45 to-transparent">
+          <span className="text-3xl font-bold">
             {dateLabel}
           </span>
         </div>

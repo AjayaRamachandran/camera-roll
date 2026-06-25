@@ -6,7 +6,6 @@ import LoadingLibrary from "./components/LoadingLibrary";
 import PhotoGrid, { CellRect } from "./components/PhotoGrid";
 import FilteredGrid from "./components/FilteredGrid";
 import GalleryControls from "./components/GalleryControls";
-import PeopleModal from "./components/PeopleModal";
 import FaceIndexingScreen from "./components/FaceIndexingScreen";
 import PhotoDetail from "./components/PhotoDetail";
 import {
@@ -47,7 +46,6 @@ export default function App() {
   const [searchText, setSearchText] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState<{ results: Photo[] } | null>(null);
-  const [peopleOpen, setPeopleOpen] = useState(false);
 
   const submitSearch = async (text: string) => {
     const q = text.trim();
@@ -75,7 +73,6 @@ export default function App() {
   };
 
   const pickPerson = (person: Person) => {
-    setPeopleOpen(false);
     runSearchForName(person.name);
   };
 
@@ -213,15 +210,11 @@ export default function App() {
               onSearchOpenChange={setSearchOpen}
               onSubmit={() => submitSearch(searchText)}
               onClear={clearSearch}
-              onOpenPeople={() => setPeopleOpen(true)}
+              onPickPerson={pickPerson}
             />
           </div>
         )}
       </main>
-
-      {ready && peopleOpen && (
-        <PeopleModal onPick={pickPerson} onClose={() => setPeopleOpen(false)} />
-      )}
 
       {ready && selected && (
         <PhotoDetail

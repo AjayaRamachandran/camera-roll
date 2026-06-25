@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 
 import { formatDuration } from "@/lib/photoApi";
+import Refract from "./Refract";
 
 interface VideoScrubBarProps {
   /** The video element to drive. Re-wires when it changes (e.g. on swipe). */
@@ -10,7 +11,7 @@ interface VideoScrubBarProps {
 }
 
 /**
- * A floating frosted-glass pill that controls the video playing behind it:
+ * A floating liquid-glass pill that controls the video playing behind it:
  * play/pause, a draggable scrub track with a played fill, and time readouts.
  * It owns no video element of its own; it attaches to whatever element the
  * detail view hands it and mirrors that element's state.
@@ -78,8 +79,8 @@ export default function VideoScrubBar({ video }: VideoScrubBarProps) {
   const pct = duration > 0 ? (current / duration) * 100 : 0;
 
   return (
-    <div
-      className="flex items-center gap-3 rounded-full frosted-glass px-3.5 pr-5 py-2 select-none"
+    <Refract
+      className="flex items-center gap-3 rounded-full px-3.5 pr-5 py-2 select-none"
       // Don't let scrub gestures bubble to the swipe/close handlers behind it.
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
@@ -118,6 +119,6 @@ export default function VideoScrubBar({ video }: VideoScrubBarProps) {
       <span className="text-sm text-white/80 tabular-nums">
         {formatDuration(duration)}
       </span>
-    </div>
+    </Refract>
   );
 }

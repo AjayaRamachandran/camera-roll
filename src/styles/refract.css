@@ -1,0 +1,108 @@
+/*
+ * Refract: the liquid-glass material.
+ *
+ * This is the new glass recipe that replaces the old flat `.frosted-glass`
+ * backdrop blur. On top of a translucent tint and a bright specular rim, it
+ * runs the backdrop through a per-element SVG displacement map so the content
+ * behind the glass bends around the rounded edges (the "lensing" you see on a
+ * real piece of curved glass).
+ *
+ * The displacement map is generated in JS per element, because it has to match
+ * that element's exact box (size + corner radius). Each <Refract> instance owns
+ * its own SVG <filter> with a unique id, so many glass surfaces can coexist on
+ * screen without sharing (and clashing over) one filter. See Refract.tsx.
+ *
+ * Tuning knobs live as props on the component (blur / tint / refraction); the
+ * values here are the fallback defaults, matching the original prototype.
+ *
+ * WebView2 note: deliberately no `overflow: hidden`. WebView2 drops the whole
+ * backdrop-filter layer (blur AND refraction) the moment a backdrop-filtered
+ * element clips its overflow. Rounded corners still clip via border-radius.
+ */
+
+/* Registered so brightness can transition smoothly on hover (an unregistered
+   custom property animates as a discrete step, not a fade). */
+@property --refract-gb {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+:root {
+  /* Spring curves shared by every morph between states. */
+  --refract-spring-pos: cubic-bezier(0.28, 1.36, 0.52, 1);
+  --refract-spring-bounds: cubic-bezier(0.5, 0, 0, 1);
+  /* Master animation duration. Lower = snappier; sub-durations scale off it.
+     Read back in JS (Refract.tsx) so the timing stays in one place. */
+  --refract-anim: 0.33s;
+}
+
+/* Position lives in the components layer so a consumer's Tailwind `absolute` /
+   `fixed` utility (utilities layer) still wins. Everything else below is
+   unlayered on purpose, so the material reliably overrides stray utilities. */
+@layer components {
+  .refract {
+    position: relative;
+  }
+}
+
+.refract {
+  /* Per-instance state, driven from JS. */
+  --blur: 3px; /* current blur, scaled from the `blur` prop by element size */
+  --sa: 0.1; /* tint opacity, set from the `tint` prop */
+  --refract-gb: 1; /* hover brightness */
+  --nx: 0px; /* hover nudge toward the cursor, x */
+  --ny: 0px; /* hover nudge toward the cursor, y */
+  --sc: 1; /* hover scale */
+
+  background: rgba(38, 40, 46, var(--sa));
+  border-top: 1px solid rgba(255, 255, 255, 0.55);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
+
+  /* Hover lean + pop. Uses translate/scale within `transform`; consumers must
+     not also set a `transform` utility on the same element (center with
+     margins / inset instead). */
+  transform: translate(var(--nx), var(--ny)) scale(var(--sc));
+  transition:
+    transform calc(var(--refract-anim) * 0.36) ease,
+    --refract-gb calc(var(--refract-anim) * 0.24) ease,
+    color 0.14s ease;
+}
+
+/* Bright specular hairline riding the very edge of the glass. */
+.refract::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.45))
+    drop-shadow(0 1px 4px rgba(255, 255, 255, 0.45));
+}
+
+/* Applied for the duration of a state change so size / radius / position spring
+   between states instead of cutting. Toggled on by Refract.tsx when it detects
+   the box has changed, then removed once the spring settles. */
+.refract-morph {
+  transition:
+    width var(--refract-anim) var(--refract-spring-bounds),
+    height var(--refract-anim) var(--refract-spring-bounds),
+    border-radius var(--refract-anim) var(--refract-spring-bounds),
+    left var(--refract-anim) var(--refract-spring-pos),
+    top var(--refract-anim) var(--refract-spring-pos),
+    right var(--refract-anim) var(--refract-spring-pos),
+    bottom var(--refract-anim) var(--refract-spring-pos),
+    transform calc(var(--refract-anim) * 0.36) ease,
+    --refract-gb calc(var(--refract-anim) * 0.24) ease,
+    color 0.14s ease;
+}
+
+/* The per-instance SVG filter holder. Zero-size and out of flow so it never
+   affects the layout of the glass element it lives inside. */
+.refract-filter {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}

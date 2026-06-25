@@ -1,5 +1,7 @@
 import { ZoomIn, ZoomOut } from "lucide-react";
 
+import Refract from "./Refract";
+
 interface ZoomStepperProps {
   /** Available zoom levels (grid dimensions), ascending. */
   levels: number[];
@@ -9,7 +11,7 @@ interface ZoomStepperProps {
 }
 
 /**
- * Frosted-glass zoom control that sits at the bottom of the grid.
+ * Liquid-glass zoom control that sits at the bottom of the grid.
  *
  * Lower levels show larger photos (fewer on screen); higher levels pack more
  * photos in. The two buttons step one level at a time, and the track segments
@@ -23,8 +25,10 @@ export default function ZoomStepper({ levels, value, onChange }: ZoomStepperProp
   const stepButton =
     "grid place-items-center rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30";
 
+  // Centered with inset-x-0 + mx-auto rather than -translate-x-1/2, because
+  // Refract drives its own `transform` for the hover lean/pop.
   return (
-    <div className="pointer-events-auto absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full frosted-glass px-1.5 py-1 font-sans">
+    <Refract className="pointer-events-auto absolute bottom-6 inset-x-0 mx-auto z-30 flex w-fit items-center gap-1 rounded-full px-1.5 py-1 font-sans">
       <button
         type="button"
         aria-label="Show larger photos"
@@ -59,6 +63,6 @@ export default function ZoomStepper({ levels, value, onChange }: ZoomStepperProp
       >
         <ZoomOut size={16} />
       </button>
-    </div>
+    </Refract>
   );
 }

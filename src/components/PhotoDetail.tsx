@@ -6,6 +6,7 @@ import { Photo, isVideo, photoUrl, thumbUrl } from "@/lib/photoApi";
 import { CellRect } from "./PhotoGrid";
 import Filmstrip from "./Filmstrip";
 import InfoPopover from "./InfoPopover";
+import Refract from "./Refract";
 import VideoScrubBar from "./VideoScrubBar";
 
 interface PhotoDetailProps {
@@ -477,12 +478,13 @@ export default function PhotoDetail({
 
           {/* Top controls: info + back-to-grid, in a frosted pill like the zoom
               stepper. Offset below the window title bar. */}
-          <div
-            className="absolute z-30 flex items-center gap-1 rounded-full frosted-glass px-1.5 py-1"
+          <Refract
+            className="absolute z-30 flex items-center gap-1 rounded-full px-1.5 py-1"
             style={{
               top: "calc(var(--titlebar-height, 36px) + 8px)",
               right: (showInfo ? INFO_WIDTH : 0) + 12,
-              transition: `right ${NUDGE}`,
+              // Keep the info-panel push plus the glass hover lean/brighten.
+              transition: `right ${NUDGE}, transform 0.12s ease, --refract-gb 0.08s ease`,
             }}
           >
             <button
@@ -501,7 +503,7 @@ export default function PhotoDetail({
             >
               <LayoutGrid size={18} />
             </button>
-          </div>
+          </Refract>
 
           {/* Docked info panel: slides in from the right and claims its width,
               which shrinks the photo area (above) to match. */}

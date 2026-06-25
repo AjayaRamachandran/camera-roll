@@ -9,15 +9,18 @@
 
 /* @import must come first in a stylesheet to be honored. */
 @import "tailwindcss";
+@import "./fonts.css";
 @import "./frosted.css";
 @import "./photos.css";
+@import "./refract.css";
 
-/* Font stacks. Per AGENTS.md: Google Sans everywhere, Google Sans Code for
-   photo metadata only. Never Inter. These fall back to the platform UI font if
-   the licensed Google Sans files are not installed. */
+/* Font stacks. SF Pro Display everywhere (bundled locally from
+   src/assets/sf-pro-font, declared in fonts.css). Photo metadata uses a
+   monospace stack (SF Mono where available). These fall back to the platform UI
+   font if the bundled faces fail to load. */
 @theme {
-  --font-sans: "Google Sans", "Google Sans Text", system-ui, "Segoe UI", sans-serif;
-  --font-code: "Google Sans Code", ui-monospace, "Cascadia Code", "Segoe UI", monospace;
+  --font-sans: "SF Pro Display", system-ui, "Segoe UI", sans-serif;
+  --font-code: "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI", monospace;
 }
 
 :root {
@@ -25,8 +28,8 @@
   /* Height of the custom title bar. Used by .app-content and the TitleBar. */
   --titlebar-height: 26px;
   /* Aliases used by plain CSS (Tailwind utilities use --font-sans/--font-code). */
-  --font-google-sans: "Google Sans", "Google Sans Text", system-ui, "Segoe UI", sans-serif;
-  --font-google-sans-code: "Google Sans Code", ui-monospace, "Cascadia Code", "Segoe UI", monospace;
+  --font-google-sans: "SF Pro Display", system-ui, "Segoe UI", sans-serif;
+  --font-google-sans-code: "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI", monospace;
   font-family: var(--font-google-sans);
   font-size: 14px;
   /* Subtle frosted tint colors, reused by components. */

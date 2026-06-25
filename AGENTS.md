@@ -6,18 +6,20 @@ flag it rather than quietly breaking the rule.
 
 ## Typography
 
-- Use **Google Sans** for essentially all text: UI, labels, headings, body.
-- Use **Google Sans Code** only for metadata about photos (dimensions, capture
-  data, file info, and similar technical values).
+- Use **SF Pro Display** for essentially all text: UI, labels, headings, body.
+- Use a **monospace** face (SF Mono where available) only for metadata about
+  photos (dimensions, capture data, file info, and similar technical values).
 - Do not use a monospace font anywhere else unless it is explicitly requested.
 - **Never use Inter.** Not as a primary face, not as a fallback you reach for.
 - Do not use all-caps micro labels (tiny uppercase text). Use normal sentence
   case at a readable size.
 
-Both faces are loaded from Google Fonts in `index.html`. Font families are
-defined as CSS variables in `src/styles/global.css` (`--font-google-sans`,
-`--font-google-sans-code`, mirrored by Tailwind's `--font-sans` / `--font-code`).
-Reference those, do not hardcode font names in components.
+SF Pro Display is bundled locally from `src/assets/sf-pro-font` and declared via
+`@font-face` (all weights/styles) in `src/styles/fonts.css` — no external font
+CDN. Font families are defined as CSS variables in `src/styles/global.css`
+(`--font-google-sans`, `--font-google-sans-code`, mirrored by Tailwind's
+`--font-sans` / `--font-code`). Reference those, do not hardcode font names in
+components.
 
 ## Styling
 

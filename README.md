@@ -70,8 +70,7 @@ The first run indexes the whole library (this can take a while for large backups
 
 ## Next steps
 
-The goal is to turn a flat camera roll into a library you can actually search by
-who, what, and where. Roughly in order:
+The goal is to turn a flat camera roll into a library you can actually search by who, what, and where. Roughly in order:
 
 ### 1. People (face recognition) [DONE]
 Run images through a face-recognition model during indexing to detect **persistent faces** across the library. Cluster recurring faces into "people" in the index so you can open a selection for a single person and see every photo they appear in.

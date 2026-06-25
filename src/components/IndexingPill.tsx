@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 
 import { getSecondaryStatus, formatEta, SecondaryStatus } from "../lib/photoApi";
+import Refract from "./Refract";
 
 /**
- * Small frosted-glass pill that shows the progress of background indexing: a
+ * Small liquid-glass pill that shows the progress of background indexing: a
  * short label and a done/total count, with a thin bar across the bottom edge
  * conveying the same progress. Hovering swaps the count for a human time
  * estimate. It self-fetches, fades in only while indexing is in progress, and
@@ -75,9 +76,13 @@ export default function IndexingPill() {
   const showEta = hovered && eta != null;
 
   return (
-    <div
-      className="pointer-events-auto w-64 rounded-2xl frosted-glass font-sans"
-      style={{ opacity: show ? 1 : 0, transition: "opacity 0.3s ease" }}
+    <Refract
+      className="pointer-events-auto w-64 rounded-2xl font-sans"
+      style={{
+        opacity: show ? 1 : 0,
+        // Keep the glass hover (lean/brighten) animating alongside the fade.
+        transition: "opacity 0.3s ease, transform 0.12s ease, --refract-gb 0.08s ease",
+      }}
       aria-hidden={!show}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -102,6 +107,6 @@ export default function IndexingPill() {
           style={{ width: `${pct}%` }}
         />
       </div>
-    </div>
+    </Refract>
   );
 }
