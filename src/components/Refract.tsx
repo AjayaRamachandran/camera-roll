@@ -9,6 +9,8 @@ import {
   useState,
 } from "react";
 
+import { useAcrylicMatte } from "./AcrylicMatte";
+
 /**
  * Refract: a wrapper that gives any element the liquid-glass material.
  *
@@ -17,6 +19,13 @@ import {
  * (bends) around the rounded edges. It also leans toward the cursor and
  * brightens on hover, and springs smoothly when it changes size between states
  * (e.g. an icon button that expands into a dropdown).
+ *
+ * State transitions are native: the spring lives in the base `.refract` rule
+ * (see src/styles/refract.css), so to morph a glass surface between two states
+ * you just toggle its geometry (width / height / border-radius / left / top /
+ * right / bottom) and the transition animates it. No flags or imperative calls.
+ * This component's only job during a morph is to regenerate the displacement
+ * map each frame (via the ResizeObserver below) so the lensing tracks the box.
  *
  * How the refraction works: a displacement map is generated per element and fed
  * to an SVG filter used as a `backdrop-filter`. The map has to match the
@@ -54,8 +63,8 @@ export interface RefractProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
 }
 
-const DEFAULT_BLUR = 2;
-const DEFAULT_TINT = 0.6;
+const DEFAULT_BLUR = 1.5;
+const DEFAULT_TINT = 0.4;
 const DEFAULT_REFRACTION = 0.08;
 
 /** Reference box length the blur is calibrated against (the prototype orb). */
@@ -158,10 +167,11 @@ function buildMap(W: number, H: number, b: number, a: number) {
       if (Math.abs(dy) > maxAbs) maxAbs = Math.abs(dy);
     }
   }
+  const mapping = (x: number) => x;
   const scale = 2 * maxAbs;
   for (let k = 0; k < mw * mh; k++) {
-    data[k * 4] = clamp255(Math.round(255 * (0.5 + dxA[k] / scale)));
-    data[k * 4 + 1] = clamp255(Math.round(255 * (0.5 + dyA[k] / scale)));
+    data[k * 4] = clamp255(Math.round(255 * (mapping(0.5 + dxA[k] / scale))));
+    data[k * 4 + 1] = clamp255(Math.round(255 * (mapping(0.5 + dyA[k] / scale))));
     data[k * 4 + 2] = 128;
     data[k * 4 + 3] = 255;
   }
@@ -190,6 +200,11 @@ export default function Refract({
   // strip everything but id-safe characters. Unique per instance -> no clashes.
   const filterId = "refract-" + useId().replace(/[^a-zA-Z0-9_-]/g, "");
 
+  // Register this glass surface's footprint into the acrylic matte so the
+  // captured backplate is painted (and only painted) beneath it. See
+  // AcrylicMatte.tsx / docs/liquid-glass-acrylic.md.
+  const matte = useAcrylicMatte();
+
   const elRef = useRef<HTMLElement>(null);
   const feImageRef = useRef<SVGFEImageElement>(null);
   const dispRef = useRef<SVGFEDisplacementMapElement>(null);
@@ -204,12 +219,6 @@ export default function Refract({
   useEffect(() => {
     const el = elRef.current;
     if (!el) return;
-
-    // Master duration (ms) read from CSS so JS timing tracks the same knob.
-    const animMs =
-      (parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue("--refract-anim")
-      ) || 0.33) * 1000;
 
     // Blur grows with the box so a small pill and a big panel read as the same
     // "frostedness" (more blur when there's more glass).
@@ -251,39 +260,23 @@ export default function Refract({
       });
     };
 
-    // Detect state changes (the box resizing) and play the spring. The first
-    // observation is the initial layout, not a state change, so skip it.
-    let lastW = -1;
-    let lastH = -1;
-    let morphTimer: number | undefined;
-    const ro = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect;
-      if (box) {
-        const w = Math.round(box.width);
-        const h = Math.round(box.height);
-        const changed = w !== lastW || h !== lastH;
-        const first = lastW === -1;
-        lastW = w;
-        lastH = h;
-        if (changed && !first) {
-          el.classList.add("refract-morph");
-          if (morphTimer) clearTimeout(morphTimer);
-          morphTimer = window.setTimeout(
-            () => el.classList.remove("refract-morph"),
-            animMs + 80
-          );
-        }
-      }
-      scheduleMap();
-    });
+    // The box can change for any reason (a state-transition morph, a layout
+    // reflow, content resizing). Whatever the cause, regenerate the displacement
+    // map so the lensing keeps matching the current box. The spring that
+    // actually animates the morph is the native CSS transition on `.refract`.
+    const ro = new ResizeObserver(() => scheduleMap());
     ro.observe(el);
 
     // First paint, then again after layout settles.
     requestAnimationFrame(regenMap);
 
+    // Register this element so the matte's rAF loop tracks its live footprint
+    // (position included), and drop it on unmount.
+    matte.register(filterId, el);
+
     return () => {
       ro.disconnect();
-      if (morphTimer) clearTimeout(morphTimer);
+      matte.unregister(filterId);
     };
   }, []);
 
@@ -373,6 +366,13 @@ export default function Refract({
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
     >
+      {/* Drop shadow: a blurred, filled layer behind the glass. It has to be a
+          real painted element (not a box-shadow / filter: drop-shadow) because
+          shadow primitives don't composite over the app's transparent acrylic
+          window. inset:0 + border-radius:inherit makes it track the box and
+          morph with it for free. See .refract-shadow in refract.css. */}
+      <span className="refract-shadow" aria-hidden="true" />
+
       {/* Per-instance displacement filter. The unique id is what keeps multiple
           glass surfaces from sharing (and corrupting) one another's map. */}
       <svg className="refract-filter" aria-hidden="true">

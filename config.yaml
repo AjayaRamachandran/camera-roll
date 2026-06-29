@@ -1,14 +1,18 @@
 # Camera Roll configuration.
 #
-# These paths are intentionally hard-coded here so the rest of the app (Python
-# backend, Rust shell, and React frontend) all read the same source of truth.
-# Edit them to point at a different library or index location.
+# Tuning lives here and is shared across every photo library. Which folders are
+# libraries, and which one is being viewed, is chosen in the app at runtime (and
+# stored in <index_dir>/libraries.json), not here.
 
-# Folder that gets recursively scanned for photos.
+# Seed for the very first library, only used to adopt a pre-existing index the
+# first time the new multi-library layout runs. After that, libraries are added
+# and switched from the app, and this value is ignored.
 photo_root: "C:\\Users\\Ajaya\\OneDrive\\Pictures\\iPhone Backup 6-12-26"
 
-# Folder where all generated index files live. The user has full access to this.
-# Inside it the app creates:
+# The indexes ROOT: the folder that holds one index subfolder per library, plus
+# libraries.json (the source-to-index map) and a shared models/ folder. Used as
+# the default location on first run; the user can choose a different one in the
+# app. Each library's subfolder contains:
 #   index.json        sorted list of every photo (original path + thumbnail)
 #   thumbnails/        one cropped JPG per photo
 #   megatiles/g5, g10, g20   composed tiles per zoom level the grid renders
@@ -65,3 +69,19 @@ secondary_index:
     flush_every: 25
     # Photos detected at once in the foreground (fast) mode. 0 = one per CPU core.
     foreground_workers: 0
+    # Base the live time estimate on the rate over the last N photos (per index
+    # type). Smaller = more reactive to the current speed; larger = smoother. Too
+    # small and a short run of easy photos makes it falsely read "almost done".
+    eta_window_units: 150
+
+# Reverse-geocode each photo's GPS into searchable place keywords (nearest
+# landmark, town/city, state, country). This runs as a second background pass
+# next to faces and repairs itself the same way. It needs the bundled GeoNames
+# data in server/geodata (built once by server/tools/build_geo_data.py); without
+# that data the pass stays off and face indexing is unaffected.
+locations:
+  # A landmark is attached only when a notable place is within this many metres
+  # of the photo; otherwise the landmark field is left empty.
+  landmark_threshold_m: 750
+  # Folder holding the bundled GeoNames extracts. Empty -> server/geodata.
+  data_dir: ""

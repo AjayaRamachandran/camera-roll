@@ -10,6 +10,10 @@ import Refract from "./Refract";
  * estimate. It self-fetches, fades in only while indexing is in progress, and
  * fades out the moment it finishes. It is laid out by GalleryControls, so it
  * positions itself relatively (no absolute placement here).
+ *
+ * Clicking the pill calls `onResume`, which kicks indexing back to full speed
+ * and returns to the dedicated indexing screen — so the user can finish a run
+ * fast without leaving and relaunching the app.
  */
 
 const POLL_MS = 3000;
@@ -45,7 +49,7 @@ function useSecondaryStatus(): SecondaryStatus | null {
   return status;
 }
 
-export default function IndexingPill() {
+export default function IndexingPill({ onResume }: { onResume: () => void }) {
   const status = useSecondaryStatus();
   const running = status != null && status.total_units > 0 && status.percent < 100;
 
@@ -77,7 +81,12 @@ export default function IndexingPill() {
 
   return (
     <Refract
-      className="pointer-events-auto w-64 rounded-2xl font-sans"
+      as="button"
+      type="button"
+      onClick={onResume}
+      title="Resume full-speed indexing"
+      aria-label="Resume full-speed indexing"
+      className="pointer-events-auto block w-64 cursor-pointer rounded-full text-left font-sans top-1"
       style={{
         opacity: show ? 1 : 0,
         // Keep the glass hover (lean/brighten) animating alongside the fade.
@@ -87,8 +96,8 @@ export default function IndexingPill() {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div className="flex items-baseline justify-between gap-3 px-3.5 pt-2 pb-1">
-        <span className="text-sm text-(--frost-text)">Finding people...</span>
+      <div className="flex items-baseline justify-between gap-3 px-3.5 pt-2.5 pb-1.5">
+        <span className="text-md text-(--frost-text)">Indexing...</span>
         <span
           className={
             showEta

@@ -58,33 +58,27 @@
   background: rgba(38, 40, 46, var(--sa));
   border-top: 1px solid rgba(255, 255, 255, 0.55);
   border-bottom: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
+  /* The drop shadow is a separate painted layer (.refract-shadow below), NOT a
+     box-shadow or filter: drop-shadow here. Over the app's transparent acrylic
+     window, shadow primitives blend toward transparency and never render; only a
+     real filled element composites over the OS acrylic (the same reason the tint
+     is visible). So the shadow is a blurred, filled rounded rect behind the
+     glass. */
 
   /* Hover lean + pop. Uses translate/scale within `transform`; consumers must
      not also set a `transform` utility on the same element (center with
      margins / inset instead). */
   transform: translate(var(--nx), var(--ny)) scale(var(--sc));
-  transition:
-    transform calc(var(--refract-anim) * 0.36) ease,
-    --refract-gb calc(var(--refract-anim) * 0.24) ease,
-    color 0.14s ease;
-}
 
-/* Bright specular hairline riding the very edge of the glass. */
-.refract::after {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  pointer-events: none;
-  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.45))
-    drop-shadow(0 1px 4px rgba(255, 255, 255, 0.45));
-}
-
-/* Applied for the duration of a state change so size / radius / position spring
-   between states instead of cutting. Toggled on by Refract.tsx when it detects
-   the box has changed, then removed once the spring settles. */
-.refract-morph {
+  /* The state-transition API, applied to EVERY glass surface.
+     This is what makes the liquid glass "transition states": whenever a
+     consumer changes the element's box (size, corner radius, or position) the
+     glass springs between the two states natively, no per-component setup. To
+     animate between states, just toggle the relevant geometry (width / height /
+     border-radius / left / top / right / bottom) on the element; the native CSS
+     transition below does the rest, and Refract regenerates its refraction map
+     as the box morphs. Bounds settle (no overshoot); position overshoots a
+     touch so a control "shoots, then expands" between states. */
   transition:
     width var(--refract-anim) var(--refract-spring-bounds),
     height var(--refract-anim) var(--refract-spring-bounds),
@@ -96,6 +90,24 @@
     transform calc(var(--refract-anim) * 0.36) ease,
     --refract-gb calc(var(--refract-anim) * 0.24) ease,
     color 0.14s ease;
+}
+
+/* The drop shadow: a very subtle, very blurry, filled rounded rect sitting
+   behind the glass. Filled (not a box-shadow / filter: drop-shadow) so it
+   actually composites over the transparent OS acrylic. inset:0 + border-radius:
+   inherit makes it match the glass box exactly and morph with it, so nothing is
+   hard-coded per state; the blur spreads it into a soft halo beyond the edges,
+   and the slight downward offset lifts the glass. z-index:-1 keeps it behind the
+   glass surface. */
+.refract-shadow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: rgba(0, 0, 0, 0.3);
+  filter: blur(16px);
+  transform: translateY(6px);
+  pointer-events: none;
 }
 
 /* The per-instance SVG filter holder. Zero-size and out of flow so it never

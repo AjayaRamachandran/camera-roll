@@ -8,11 +8,15 @@
 //! `run()` is the single setup function the binary entry point (`main.rs`)
 //! calls. It is deliberately small: each concern lives in its own module above.
 
+mod acrylic_capture;
 mod commands;
 mod python_server;
 mod window_effects;
 
-use tauri::{Manager, RunEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use tauri::{Manager, RunEvent, WindowEvent};
 
 use python_server::PythonServer;
 
@@ -25,11 +29,29 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::check_backend_health,
+            commands::reveal_in_explorer,
+            commands::pick_folder,
+            commands::restart_backend,
         ])
         .setup(|app| {
             // 1. Frosted glass: apply the native OS blur to the main window.
             if let Some(window) = app.get_webview_window("main") {
                 window_effects::apply_frost(&window);
+
+                // Acrylic backplate: capture the desktop behind the window so the
+                // liquid-glass material has real pixels to refract over the bare
+                // acrylic. `dirty` is flipped on move/resize so the capture
+                // re-registers immediately and the backplate feels live.
+                let dirty = Arc::new(AtomicBool::new(true));
+                window.on_window_event({
+                    let dirty = dirty.clone();
+                    move |event| {
+                        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+                            dirty.store(true, Ordering::Relaxed);
+                        }
+                    }
+                });
+                acrylic_capture::start(window.clone(), dirty);
             }
 
             // 2. Backend: boot the Python/FastAPI sidecar. A failure to spawn is

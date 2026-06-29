@@ -288,25 +288,12 @@ export default function PeoplePopover({ onPick }: PeoplePopoverProps) {
             borderRadius: open ? 26 : 20,
             // Centre-anchor + hover lean/pop (the --nx/--ny/--sc vars are driven
             // by Refract's hover JS), mirroring the reference's transform.
+            // Flipping `open` toggles the box (left/top/width/height/radius); the
+            // native liquid-glass spring on `.refract` animates the state change
+            // -- centre on the overshoot curve, bounds on the settle curve, so it
+            // "shoots, then expands." No transition needed here.
             transform:
               "translate(-50%, -50%) translate(var(--nx), var(--ny)) scale(var(--sc))",
-            // Arm the spring on the element itself so it's in effect the moment
-            // `open` flips the box (Refract's reactive .refract-morph lands a
-            // frame too late for a discrete toggle). This is the reference's
-            // `.glass.morph` transition verbatim: centre (left/top) on the
-            // overshoot curve, bounds (width/height/border-radius) on the settle
-            // curve, SAME duration -- the "shoot then expand" is the curve shapes,
-            // not delays. Inline style beats the .refract class rules.
-            transition: [
-              "left var(--refract-anim) var(--refract-spring-pos)",
-              "top var(--refract-anim) var(--refract-spring-pos)",
-              "width var(--refract-anim) var(--refract-spring-bounds)",
-              "height var(--refract-anim) var(--refract-spring-bounds)",
-              "border-radius var(--refract-anim) var(--refract-spring-bounds)",
-              "transform calc(var(--refract-anim) * 0.36) ease",
-              "--refract-gb calc(var(--refract-anim) * 0.24) ease",
-              "color 0.14s ease",
-            ].join(", "),
           }}
         >
           {/* Closed face: just the icon, centred. Fades AND blurs out as the
@@ -426,8 +413,8 @@ export default function PeoplePopover({ onPick }: PeoplePopoverProps) {
                         </button>
                       )}
 
-                      <span className="mt-0.5 text-xs text-white/40 font-code">
-                        {p.count}
+                      <span className="mt-0.5 text-xs text-white/40">
+                        {p.count} photos
                       </span>
                     </div>
                   ))}

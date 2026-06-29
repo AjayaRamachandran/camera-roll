@@ -65,6 +65,14 @@ EXIF_DATETIME_DIGITIZED = 36868
 EXIF_DATETIME = 306
 EXIF_ORIENTATION = 274
 
+# GPS lives in its own sub-IFD pointed at by tag 0x8825. Inside it the keys are
+# small ints: 1/2 latitude ref+value, 3/4 longitude ref+value.
+EXIF_GPSINFO = 0x8825
+GPS_LATITUDE_REF = 1
+GPS_LATITUDE = 2
+GPS_LONGITUDE_REF = 3
+GPS_LONGITUDE = 4
+
 
 def _find_config() -> Path:
     here = Path(__file__).resolve().parent
@@ -109,15 +117,64 @@ def load_config() -> dict:
     worker.setdefault("scan_yield_ms", 200)
     worker.setdefault("flush_every", 25)
     worker.setdefault("foreground_workers", 0)
+
+    # Reverse-geocoding (the locations index). Defaulted so older configs work.
+    loc = cfg.setdefault("locations", {})
+    loc.setdefault("landmark_threshold_m", 750)
+    loc.setdefault("data_dir", "")
     return cfg
 
 
 CONFIG = load_config()
-PHOTO_ROOT = Path(CONFIG["photo_root"])
-INDEX_DIR = Path(CONFIG["index_dir"])
-THUMB_DIR = INDEX_DIR / "thumbnails"
-TILE_DIR = INDEX_DIR / "megatiles"
-INDEX_FILE = INDEX_DIR / "index.json"
+
+# Which photo folders the app knows about and which one is active. The active
+# library decides PHOTO_ROOT / INDEX_DIR; everything else (tile sizes, quality,
+# face thresholds) is global config, shared across libraries. When no library is
+# set up yet, the path-bound globals stay None and the server reports that it
+# needs setup instead of crashing at import.
+import libraries
+
+INDEXES_ROOT = libraries.resolve_indexes_root(CONFIG)
+# Face models live once per indexes root, shared by every library.
+MODELS_ROOT = (INDEXES_ROOT / "models") if INDEXES_ROOT is not None else None
+
+ACTIVE_LIBRARY: Optional[dict] = None
+PHOTO_ROOT: Optional[Path] = None
+INDEX_DIR: Optional[Path] = None
+THUMB_DIR: Optional[Path] = None
+TILE_DIR: Optional[Path] = None
+INDEX_FILE: Optional[Path] = None
+
+if INDEXES_ROOT is not None:
+    # Adopt a pre-existing flat Indexes folder as the first library (one-time).
+    libraries.migrate_legacy_if_needed(INDEXES_ROOT, CONFIG.get("photo_root"))
+    ACTIVE_LIBRARY = libraries.current_library(INDEXES_ROOT)
+
+if ACTIVE_LIBRARY is not None:
+    PHOTO_ROOT = Path(ACTIVE_LIBRARY["source"])
+    INDEX_DIR = INDEXES_ROOT / ACTIVE_LIBRARY["dir"]
+    THUMB_DIR = INDEX_DIR / "thumbnails"
+    TILE_DIR = INDEX_DIR / "megatiles"
+    INDEX_FILE = INDEX_DIR / "index.json"
+
+
+def has_library() -> bool:
+    """Whether a library is selected and its paths are bound."""
+    return INDEX_DIR is not None
+
+
+def setup_step() -> Optional[str]:
+    """What the user still needs to do before browsing, or None if ready.
+
+    "index_root" -> no indexes folder chosen yet.
+    "library"    -> indexes folder chosen, but no photo library added.
+    """
+    if INDEXES_ROOT is None:
+        return "index_root"
+    if ACTIVE_LIBRARY is None:
+        return "library"
+    return None
+
 
 THUMB_SIZE = int(CONFIG["thumb_size"])
 # One grid dimension per zoom level (e.g. [7, 15, 30]). The smallest is the
@@ -146,10 +203,13 @@ def tile_dir(grid: int) -> Path:
     return TILE_DIR / f"g{grid}"
 
 
-for _d in (INDEX_DIR, THUMB_DIR, TILE_DIR):
-    _d.mkdir(parents=True, exist_ok=True)
-for _g in TILE_GRIDS:
-    tile_dir(_g).mkdir(parents=True, exist_ok=True)
+# Create the active library's index folders up front. Skipped entirely when no
+# library is set up yet (the server runs in "needs setup" mode until then).
+if has_library():
+    for _d in (INDEX_DIR, THUMB_DIR, TILE_DIR):
+        _d.mkdir(parents=True, exist_ok=True)
+    for _g in TILE_GRIDS:
+        tile_dir(_g).mkdir(parents=True, exist_ok=True)
 
 
 def photo_id(path: str) -> str:
@@ -173,6 +233,65 @@ def _exif_taken(exif) -> Optional[str]:
             except ValueError:
                 continue
     return None
+
+
+def _dms_to_degrees(dms, ref) -> Optional[float]:
+    """Turn the EXIF (degrees, minutes, seconds) triple into signed decimal.
+
+    Each component is a Pillow rational; the hemisphere ref (N/S/E/W) carries the
+    sign because the magnitudes are always positive.
+    """
+    try:
+        deg, minute, sec = (float(v) for v in dms)
+    except (TypeError, ValueError):
+        return None
+    value = deg + minute / 60.0 + sec / 3600.0
+    if str(ref).strip().upper() in ("S", "W"):
+        value = -value
+    return value
+
+
+def _exif_gps(exif) -> Optional[tuple[float, float]]:
+    """Latitude/longitude (signed decimal degrees) from an EXIF object, or None."""
+    if not exif:
+        return None
+    try:
+        gps = exif.get_ifd(EXIF_GPSINFO)
+    except Exception:
+        return None
+    if not gps:
+        return None
+    lat = gps.get(GPS_LATITUDE)
+    lon = gps.get(GPS_LONGITUDE)
+    if lat is None or lon is None:
+        return None
+    dlat = _dms_to_degrees(lat, gps.get(GPS_LATITUDE_REF) or "N")
+    dlon = _dms_to_degrees(lon, gps.get(GPS_LONGITUDE_REF) or "E")
+    if dlat is None or dlon is None:
+        return None
+    if not (-90.0 <= dlat <= 90.0 and -180.0 <= dlon <= 180.0):
+        return None
+    # An exact 0,0 is almost always a blank/missing fix, not the Gulf of Guinea.
+    if dlat == 0.0 and dlon == 0.0:
+        return None
+    return (dlat, dlon)
+
+
+def read_gps(src_str: str) -> Optional[tuple[float, float]]:
+    """Read a photo's GPS as (lat, lon) decimal degrees, or None.
+
+    Only the metadata is read; the pixels are never decoded, so this is cheap.
+    Videos, files with no GPS tag, and unreadable files all return None.
+    """
+    src = Path(src_str)
+    if src.suffix.lower() in VIDEO_EXTS:
+        return None
+    try:
+        with Image.open(src) as img:
+            return _exif_gps(img.getexif())
+    except Exception as exc:
+        print(f"[backend] cannot read GPS from {src}: {exc}")
+        return None
 
 
 def _square_thumb(img: "Image.Image") -> "Image.Image":

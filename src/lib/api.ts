@@ -30,3 +30,25 @@ export async function checkBackendHealth(): Promise<BackendHealth> {
 export async function greet(name: string): Promise<string> {
   return invoke<string>("greet", { name });
 }
+
+/** Open the OS file explorer with the given file selected/highlighted. */
+export async function revealInExplorer(path: string): Promise<void> {
+  return invoke<void>("reveal_in_explorer", { path });
+}
+
+/**
+ * Open a native folder picker. Returns the chosen path, or null if the user
+ * cancels. `title` sets the dialog's window title.
+ */
+export async function pickFolder(title: string): Promise<string | null> {
+  return invoke<string | null>("pick_folder", { title });
+}
+
+/**
+ * Restart the Python sidecar so it rebinds to the now-current library. Call
+ * this after switching or adding a library, then reload the window to pick up
+ * the new library's index.
+ */
+export async function restartBackend(): Promise<void> {
+  return invoke<void>("restart_backend");
+}

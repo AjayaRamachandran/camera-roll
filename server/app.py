@@ -21,9 +21,13 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from PIL import Image, ImageOps
 
 import imaging
+import libraries
 import secondary_index
 
-# Pull the shared config/paths from the imaging module.
+# Pull the shared config/paths from the imaging module. The path-bound ones
+# (PHOTO_ROOT, INDEX_DIR, ...) are None until a library is set up; the server
+# then runs in "needs setup" mode and the scan/secondary passes stay parked.
+INDEXES_ROOT = imaging.INDEXES_ROOT
 PHOTO_ROOT = imaging.PHOTO_ROOT
 INDEX_DIR = imaging.INDEX_DIR
 THUMB_DIR = imaging.THUMB_DIR
@@ -69,7 +73,7 @@ def snapshot_photos() -> list[dict]:
 
 def load_index() -> None:
     global PHOTOS, BY_ID, _loaded_thumb_size
-    if not INDEX_FILE.exists():
+    if INDEX_FILE is None or not INDEX_FILE.exists():
         PHOTOS, BY_ID, _loaded_thumb_size = [], {}, None
         return
     try:
@@ -216,6 +220,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup() -> None:
+    if not imaging.has_library():
+        # No library selected yet: stay idle and let the frontend run the setup
+        # flow. Paths bind on the next launch after a library is chosen.
+        _set_status(state="needs_setup", message=imaging.setup_step() or "")
+        return
     load_index()
     threading.Thread(target=scan_library, daemon=True).start()
     # Background face/people indexing. Runs independently of the main scan and
@@ -235,12 +244,91 @@ def health() -> dict:
 @app.get("/config")
 def get_config() -> dict:
     return {
-        "photo_root": str(PHOTO_ROOT),
-        "index_dir": str(INDEX_DIR),
+        "photo_root": str(PHOTO_ROOT) if PHOTO_ROOT else None,
+        "index_dir": str(INDEX_DIR) if INDEX_DIR else None,
         "thumb_size": THUMB_SIZE,
         "tile_grids": TILE_GRIDS,
         "tile_px": TILE_PX,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Setup + library management
+#
+# Switching or adding a library writes the registry, but the path-bound globals
+# only rebind at process startup, so the Rust shell restarts the sidecar after
+# these calls. They therefore just record intent and return; the new library
+# takes effect on the next boot.
+# --------------------------------------------------------------------------- #
+
+def _live_root():
+    """The indexes root as currently recorded on disk.
+
+    Resolved fresh (not the value bound at startup) so the first-run flow sees a
+    just-chosen root take effect without a restart. Only the actual indexing
+    needs the restart, since that is where paths bind.
+    """
+    return libraries.resolve_indexes_root(imaging.CONFIG)
+
+
+@app.get("/setup")
+def get_setup() -> dict:
+    """What the user still needs to do before browsing, for the first-run flow."""
+    root = _live_root()
+    active = libraries.current_library(root) if root is not None else None
+    if root is None:
+        step = "index_root"
+    elif active is None:
+        step = "library"
+    else:
+        step = None
+    return {
+        "needs_setup": step is not None,
+        "step": step,
+        "indexes_root": str(root) if root else None,
+    }
+
+
+@app.get("/libraries")
+def get_libraries() -> dict:
+    """Every registered library plus which one is active, for the switcher."""
+    return libraries.list_libraries(_live_root())
+
+
+@app.post("/libraries/root")
+def set_libraries_root(payload: dict) -> dict:
+    """Choose the folder where all index data is kept (first-run step one)."""
+    path = str(payload.get("path", "")).strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    libraries.set_indexes_root(path)
+    return {"ok": True}
+
+
+@app.post("/libraries")
+def add_library(payload: dict) -> dict:
+    """Register a photo folder and make it the active library."""
+    path = str(payload.get("path", "")).strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    root = _live_root()
+    if root is None:
+        raise HTTPException(status_code=409, detail="indexes folder not set")
+    lib = libraries.add_library(root, path, make_current=True)
+    return {"ok": True, "library": {"source": lib["source"], "name": lib["name"]}}
+
+
+@app.post("/libraries/switch")
+def switch_library(payload: dict) -> dict:
+    """Select an already-registered library to view."""
+    source = str(payload.get("source", "")).strip()
+    root = _live_root()
+    if root is None:
+        raise HTTPException(status_code=409, detail="indexes folder not set")
+    lib = libraries.set_current(root, source)
+    if lib is None:
+        raise HTTPException(status_code=404, detail="unknown library")
+    return {"ok": True}
 
 
 @app.get("/index/status")
@@ -259,6 +347,14 @@ def index_secondary_background() -> dict:
     """Drop background indexing to a single quiet thread (used by 'Run in
     background', so the gallery opens while indexing continues unobtrusively)."""
     secondary_index.set_mode("background")
+    return secondary_index.status()
+
+
+@app.post("/index/secondary/foreground")
+def index_secondary_foreground() -> dict:
+    """Push indexing back to full speed (a thread per core). Lets the user resume
+    the fast indexing screen from the gallery without restarting the app."""
+    secondary_index.set_mode("foreground")
     return secondary_index.status()
 
 
@@ -347,6 +443,12 @@ def photo_faces(pid: str) -> dict:
 def photo_face_crop(pid: str, idx: int):
     """A square crop of one detected face in a photo (by detection index)."""
     return _face_crop_response(pid, secondary_index.face_box(pid, idx))
+
+
+@app.get("/photo/{pid}/location")
+def photo_location(pid: str) -> dict:
+    """Where one photo was taken (place + coordinates), or null if unknown."""
+    return {"location": secondary_index.photo_location(pid)}
 
 
 @app.get("/search")

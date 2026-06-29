@@ -44,11 +44,29 @@ export interface IndexData {
 }
 
 export interface IndexStatus {
-  state: "idle" | "scanning" | "done" | "error";
+  state: "idle" | "scanning" | "done" | "error" | "needs_setup";
   total: number;
   done: number;
   message: string;
   count: number;
+}
+
+/** First-run setup state: what (if anything) the user must do before browsing. */
+export interface SetupState {
+  needs_setup: boolean;
+  /** "index_root" (pick a data folder) or "library" (add photos), else null. */
+  step: "index_root" | "library" | null;
+  indexes_root: string | null;
+}
+
+/** One photo library the app knows about. */
+export interface Library {
+  /** Absolute path to the source photo folder. */
+  source: string;
+  /** Display name (the folder's name). */
+  name: string;
+  /** Whether this is the library currently being viewed. */
+  current: boolean;
 }
 
 /** Progress of background indexing that runs after the library is ready. */
@@ -101,12 +119,50 @@ async function getJSON<T>(path: string): Promise<T> {
 export const getConfig = () => getJSON<AppConfig>("/config");
 export const getIndex = () => getJSON<IndexData>("/index");
 export const getStatus = () => getJSON<IndexStatus>("/index/status");
+
+/** Whether the user still needs to choose a data folder or add a library. */
+export const getSetup = () => getJSON<SetupState>("/setup");
+
+/** Every library the app knows about, with the active one flagged. */
+export const getLibraries = () =>
+  getJSON<{ current: string | null; libraries: Library[] }>("/libraries").then(
+    (r) => r.libraries
+  );
+
+async function postJSON(path: string, body: unknown): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+}
+
+/** Set the folder where all index data is kept (first-run step one). */
+export const setIndexesRoot = (path: string) =>
+  postJSON("/libraries/root", { path });
+
+/** Register a photo folder and make it the active library. */
+export const addLibrary = (path: string) => postJSON("/libraries", { path });
+
+/** Select an already-registered library to view. */
+export const switchLibrary = (source: string) =>
+  postJSON("/libraries/switch", { source });
 export const getSecondaryStatus = () =>
   getJSON<SecondaryStatus>("/index/secondary/status");
 
 /** Drop background indexing to a single quiet thread (used by "Run in background"). */
 export const setBackgroundIndexing = () =>
   fetch(`${BASE}/index/secondary/background`, { method: "POST" }).then(() => undefined);
+
+/**
+ * Push indexing back to full speed (a thread per core). Returns the fresh status
+ * so the caller can re-show the indexing screen without waiting for the next poll.
+ */
+export const setForegroundIndexing = () =>
+  fetch(`${BASE}/index/secondary/foreground`, { method: "POST" }).then(
+    (r) => r.json() as Promise<SecondaryStatus>
+  );
 
 /** The recognized people, most photographed first. */
 export const getPeople = () =>
@@ -163,6 +219,22 @@ export const getPhotoFaces = (photoId: string) =>
 export const photoFaceUrl = (photoId: string, index: number) =>
   `${BASE}/photo/${photoId}/face/${index}`;
 
+/** Where a photo was taken, when it carries usable GPS. */
+export interface PhotoLocation {
+  lat: number;
+  lon: number;
+  /** Human place string, e.g. "Boston, Massachusetts". */
+  label: string;
+  /** Search term that surfaces every photo from the same place. */
+  query: string;
+}
+
+/** The geocoded place for a photo, or null when it has no known location. */
+export const getPhotoLocation = (photoId: string) =>
+  getJSON<{ location: PhotoLocation | null }>(
+    `/photo/${photoId}/location`
+  ).then((r) => r.location);
+
 /** URL for a composed mega-tile image at a given zoom level (grid dimension). */
 export const megatileUrl = (grid: number, tile: number) =>
   `${BASE}/megatile/${grid}/${tile}`;
@@ -190,7 +262,14 @@ export function formatDuration(seconds: number): string {
  */
 export function formatEta(seconds: number | null): string | null {
   if (seconds == null || !isFinite(seconds) || seconds <= 0) return null;
-  if (seconds < 45) return "almost done";
+  // Only claim "almost done" when the run is genuinely seconds from finishing,
+  // otherwise it lingers for minutes while real work remains. Below a minute we
+  // show a coarse seconds estimate (rounded to 5s so it doesn't flicker).
+  if (seconds < 5) return "almost done";
+  if (seconds < 60) {
+    const secs = Math.max(5, Math.round(seconds / 5) * 5);
+    return `~ ${secs} sec left`;
+  }
   const mins = Math.round(seconds / 60);
   if (mins <= 1) return "~ 1 min left";
   return `~ ${mins} min left`;

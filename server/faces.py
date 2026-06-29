@@ -39,9 +39,10 @@ MIN_DET_SCORE: float = float(_FACE_CFG["min_det_score"])
 # photos concurrently across cores rather than one photo across all cores.
 INTRA_OP_THREADS: int = int(_FACE_CFG.get("ort_intra_op_threads", 0))
 
-# Where to look for the .onnx files. Empty config -> <index_dir>/models.
+# Where to look for the .onnx files. Empty config -> <indexes_root>/models,
+# which is shared across every library (the models are not library-specific).
 _models_dir_cfg = (_FACE_CFG.get("models_dir") or "").strip()
-MODELS_DIR = Path(_models_dir_cfg) if _models_dir_cfg else (imaging.INDEX_DIR / "models")
+MODELS_DIR = Path(_models_dir_cfg) if _models_dir_cfg else imaging.MODELS_ROOT
 
 # Canonical 5-point template ArcFace expects, for a 112x112 aligned crop.
 _ARCFACE_TEMPLATE = np.array(

@@ -62,6 +62,14 @@ impl PythonServer {
         Ok(())
     }
 
+    /// Stop the running sidecar and start a fresh one. Used when the active
+    /// library changes: every path is bound at process startup, so a clean
+    /// restart is the simplest, most robust way to rebind to the new library.
+    pub fn restart(&self, app: &AppHandle) -> std::io::Result<()> {
+        self.stop();
+        self.start(app)
+    }
+
     /// Terminate the child process if it is still running. Called on app exit.
     pub fn stop(&self) {
         if let Ok(mut guard) = self.child.lock() {

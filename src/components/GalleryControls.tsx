@@ -21,6 +21,8 @@ interface GalleryControlsProps {
   onClear: () => void;
   /** Filter the gallery to a person picked in the People popover. */
   onPickPerson: (person: Person) => void;
+  /** Resume the full-speed indexing screen (triggered from the indexing pill). */
+  onResumeIndexing: () => void;
 }
 
 /**
@@ -40,6 +42,7 @@ export default function GalleryControls({
   onSubmit,
   onClear,
   onPickPerson,
+  onResumeIndexing,
 }: GalleryControlsProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -54,14 +57,22 @@ export default function GalleryControls({
 
   return (
     <div className="pointer-events-none absolute top-3 right-5 z-30 flex items-center justify-end gap-4">
-      <IndexingPill />
+      <IndexingPill onResume={onResumeIndexing} />
 
       <PeoplePopover onPick={onPickPerson} />
 
-      {/* The search field: a glass pill that starts as a circular button and
-          grows as the input widens. Refract regenerates its refraction map as
-          the box grows, so the lensing tracks the expanding pill. */}
-      <Refract className="top-0.75 pointer-events-auto flex items-center rounded-full h-11 px-1.5 font-sans">
+      {/* The search field: a glass pill that transitions between two states, a
+          circular icon button and a full search bar. Only the box geometry is
+          toggled (the closed width is just the icon, the open width fits the
+          field); the native liquid-glass spring on Refract animates the morph,
+          and Refract regenerates its refraction map as the box grows so the
+          lensing tracks the expanding pill. The icon stays put through the
+          morph; the input is a flex child that the growing box makes room for,
+          fading in as the space appears. */}
+      <Refract
+        className="top-0.75 pointer-events-auto flex items-center rounded-full h-11 px-1.5 font-sans"
+        style={{ width: searchOpen ? 248 : 38 }}
+      >
         <button
           type="button"
           aria-label={searchOpen ? "Search" : "Open search"}
@@ -81,11 +92,10 @@ export default function GalleryControls({
           }}
           placeholder="Search"
           tabIndex={searchOpen ? 0 : -1}
-          className="bg-transparent text-md text-white/90 outline-none placeholder:text-white/40 transition-[width,opacity,margin] duration-400 ease-[cubic-bezier(0.17,1.5,0.5,1)]"
+          className="min-w-0 flex-1 bg-transparent text-md text-white/90 outline-none placeholder:text-white/40 transition-opacity duration-300"
           style={{
-            width: searchOpen ? 176 : 0,
             opacity: searchOpen ? 1 : 0,
-            marginRight: searchOpen ? 4 : 0,
+            pointerEvents: searchOpen ? "auto" : "none",
           }}
         />
 

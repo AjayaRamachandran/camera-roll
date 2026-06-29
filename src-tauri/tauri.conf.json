@@ -21,7 +21,8 @@
         "center": true,
         "decorations": false,
         "transparent": true,
-        "shadow": true
+        "shadow": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-color-profile=srgb --disable-color-correct-rendering"
       }
     ],
     "security": {
@@ -42,6 +43,14 @@
       "../server/main.py",
       "../server/app.py",
       "../server/imaging.py",
+      "../server/libraries.py",
+      "../server/faces.py",
+      "../server/secondary_index.py",
+      "../server/geocode.py",
+      "../server/geodata/cities.npz",
+      "../server/geodata/landmarks.npz",
+      "../server/geodata/admin1.tsv",
+      "../server/geodata/countries.tsv",
       "../server/requirements.txt",
       "../server/README.md"
     ]

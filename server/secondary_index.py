@@ -31,12 +31,14 @@ import json
 import os
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+import geocode
 import imaging
 
 # --------------------------------------------------------------------------- #
@@ -55,6 +57,15 @@ _WORKER_CFG = _SEC["worker"]
 WORK_SLEEP_S: float = int(_WORKER_CFG["work_sleep_ms"]) / 1000.0
 SCAN_YIELD_S: float = int(_WORKER_CFG["scan_yield_ms"]) / 1000.0
 FLUSH_EVERY: int = int(_WORKER_CFG["flush_every"])
+# How many of the most recently processed photos (per index type) to base the
+# ETA on. The cumulative average reacts too slowly (early slow photos or a faster
+# machine than last session drag the estimate off for the whole run), so we
+# project from the rate over a trailing window instead. The window is measured in
+# photos (not chunks) and kept per type: a chunk or two is far too few — a short
+# run of easy photos (few/no faces) would crater the rate and falsely read
+# "almost done" — while the per-type split stops slow face work from being priced
+# at the much faster location rate.
+ETA_WINDOW_UNITS: int = int(_WORKER_CFG.get("eta_window_units", 150))
 # How many photos to detect faces in at once while indexing in the foreground
 # (the fast, halt-the-app mode). 0 means "use a thread per CPU core". The
 # background mode always uses a single thread so it stays out of the way.
@@ -64,13 +75,16 @@ FOREGROUND_WORKERS_CFG: int = int(_WORKER_CFG.get("foreground_workers", 0))
 def _foreground_workers() -> int:
     return FOREGROUND_WORKERS_CFG if FOREGROUND_WORKERS_CFG > 0 else imaging.pool_workers()
 
+# Resolved against the active library. All None until a library is set up, in
+# which case the worker never starts (see start()) and nothing touches them.
 INDEX_DIR = imaging.INDEX_DIR
-FACES_FILE = INDEX_DIR / "faces.json"
-PEOPLE_FILE = INDEX_DIR / "people.json"
-LOG_FILE = INDEX_DIR / "indexing_log.json"
+FACES_FILE = (INDEX_DIR / "faces.json") if INDEX_DIR else None
+PEOPLE_FILE = (INDEX_DIR / "people.json") if INDEX_DIR else None
+LOCATIONS_FILE = (INDEX_DIR / "locations.json") if INDEX_DIR else None
+LOG_FILE = (INDEX_DIR / "indexing_log.json") if INDEX_DIR else None
 # User-authored names for people, kept in their own file so they survive the
 # auto-built people table being pruned or rebuilt. The map is person id -> name.
-ALIASES_FILE = INDEX_DIR / "aliases.json"
+ALIASES_FILE = (INDEX_DIR / "aliases.json") if INDEX_DIR else None
 
 # --------------------------------------------------------------------------- #
 # In-memory state (guarded by _sec_lock)
@@ -79,6 +93,9 @@ ALIASES_FILE = INDEX_DIR / "aliases.json"
 _sec_lock = threading.Lock()
 
 _faces: dict[str, dict] = {}     # photo_id -> {indexed_at, engine, faces:[...]}
+# photo_id -> {indexed_at, engine, lat, lon, landmark, city, state, country,
+# keywords} for geotagged photos, or {indexed_at, no_gps:true} for the rest.
+_locations: dict[str, dict] = {}
 _people: dict[str, dict] = {}    # person_id(str) -> {count,label,cover,samples}
 _aliases: dict[str, str] = {}    # person_id(str) -> user-given name
 _next_person_id: int = 1
@@ -88,6 +105,13 @@ _state_loaded = False
 
 _log: dict = {"version": 1, "total_seconds": 0.0, "sessions": []}
 _session: Optional[dict] = None
+# Per-type rolling window of (seconds, units) for the most recently processed
+# photos, each trimmed to ~ETA_WINDOW_UNITS photos. Drives the realtime ETA.
+# In-memory only: a fresh session starts empty and reports no ETA until the first
+# chunk fills the window (which happens almost immediately).
+_recent: dict[str, deque] = {}        # type name -> deque[(seconds, units)]
+_recent_units: dict[str, int] = {}    # type name -> units currently in window
+_recent_seconds: dict[str, float] = {}  # type name -> seconds currently in window
 
 _worker_state = "idle"           # idle | indexing | paused-for-scan | error
 _worker_error: Optional[str] = None
@@ -168,6 +192,12 @@ def _prune_faces(valid_ids: set[str]) -> None:
     stale = [pid for pid in _faces if pid not in valid_ids]
     for pid in stale:
         _faces.pop(pid, None)
+
+
+def _faces_record_error(pid: str) -> None:
+    """Mark a photo done-with-error so a bad image is not retried forever."""
+    with _sec_lock:
+        _faces[pid] = {"indexed_at": _now(), "faces": [], "error": "failed"}
 
 
 # --- aliases (user-given names) ------------------------------------------- #
@@ -278,6 +308,93 @@ def _process_photo_faces(photo: dict) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Locations pass
+# --------------------------------------------------------------------------- #
+#
+# Reverse-geocode each photo's GPS into place keywords (nearest landmark, city,
+# state, country). The per-photo record on disk is the resume cursor, exactly
+# like faces: a photo with no record is pending, a photo with a `no_gps` record
+# is done and never retried. The heavy geocode data loads lazily inside
+# geocode.reverse(); this pass only ever reads the small EXIF GPS tag itself.
+
+
+# Bump when the geocoding logic changes in a way that should re-tag photos that
+# were already indexed. On load, records written by an older version are dropped
+# so the worker geocodes them again (cheap: GPS read + nearest-point search, no
+# model). v2 added the "metro" / principal-city tag.
+LOCATIONS_VERSION = 2
+
+
+def _load_locations() -> None:
+    global _locations
+    data = _read_json(LOCATIONS_FILE) or {}
+    if not isinstance(data, dict):
+        _locations = {}
+        return
+    if data.get("version", 1) < LOCATIONS_VERSION:
+        _locations = {}  # stale: force a re-geocode under the current logic
+        return
+    _locations = data.get("photos", {})
+
+
+def _flush_locations() -> None:
+    _atomic_write(
+        LOCATIONS_FILE,
+        {"version": LOCATIONS_VERSION, "type": "locations", "photos": _locations},
+    )
+
+
+def _locations_done_ids() -> set[str]:
+    return set(_locations.keys())
+
+
+def _locations_count_done() -> int:
+    return len(_locations)
+
+
+def _prune_locations(valid_ids: set[str]) -> None:
+    stale = [pid for pid in _locations if pid not in valid_ids]
+    for pid in stale:
+        _locations.pop(pid, None)
+
+
+def _locations_record_error(pid: str) -> None:
+    with _sec_lock:
+        _locations[pid] = {"indexed_at": _now(), "error": "failed"}
+
+
+def _process_photo_locations(photo: dict) -> None:
+    """Reverse-geocode one photo, then store its record.
+
+    Reading the GPS tag and geocoding (no model, just a numpy nearest-point
+    search) run WITHOUT the lock; only the small state update is locked. Photos
+    with no usable GPS get a `no_gps` record so they still count as done.
+    """
+    pid = photo["id"]
+    coords = imaging.read_gps(photo["path"])
+    if coords is None:
+        with _sec_lock:
+            _locations[pid] = {"indexed_at": _now(), "no_gps": True}
+        return
+
+    lat, lon = coords
+    fields = geocode.reverse(lat, lon)  # numpy nearest-point search; no lock held
+    with _sec_lock:
+        _locations[pid] = {
+            "indexed_at": _now(),
+            "engine": geocode.engine_name(),
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+            "landmark": fields["landmark"],
+            "city": fields["city"],
+            "metro": fields["metro"],
+            "state": fields["state"],
+            "country": fields["country"],
+            "keywords": fields["keywords"],
+        }
+
+
+# --------------------------------------------------------------------------- #
 # Generalized index-type registry
 # --------------------------------------------------------------------------- #
 
@@ -290,6 +407,10 @@ class IndexType:
     count_done: Callable[[], int]
     process_photo: Callable[[dict], None]
     prune: Callable[[set[str]], None]
+    # Mark one photo done-with-error, so a single bad file (or a per-photo
+    # failure inside process_photo) is recorded against the right index and not
+    # retried forever. Used by the worker's catch-all handler.
+    record_error: Callable[[str], None]
 
 
 def _build_faces_type() -> IndexType:
@@ -301,12 +422,35 @@ def _build_faces_type() -> IndexType:
         count_done=_faces_count_done,
         process_photo=_process_photo_faces,
         prune=_prune_faces,
+        record_error=_faces_record_error,
     )
 
 
-# Append more passes here later (text, places, ...). The progress math, worker
-# loop, timing, and status endpoint all generalize over this list unchanged.
+def _build_locations_type() -> IndexType:
+    return IndexType(
+        name="locations",
+        load=_load_locations,
+        flush=_flush_locations,
+        done_ids=_locations_done_ids,
+        count_done=_locations_count_done,
+        process_photo=_process_photo_locations,
+        prune=_prune_locations,
+        record_error=_locations_record_error,
+    )
+
+
+# The progress math, worker loop, timing, and status endpoint all generalize
+# over this list unchanged. Locations only joins when its bundled data is
+# present; without it the pass stays off and faces are unaffected (build the
+# data with server/tools/build_geo_data.py).
 REGISTRY: list[IndexType] = [_build_faces_type()]
+if geocode.data_available():
+    REGISTRY.append(_build_locations_type())
+else:
+    print(
+        "[backend] location indexing disabled: geocoding data not found "
+        f"({geocode.DATA_DIR}); run server/tools/build_geo_data.py"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -330,11 +474,34 @@ def _flush_log() -> None:
     _atomic_write(LOG_FILE, _log)
 
 
-def _accumulate_time(seconds: float, photos: int) -> None:
+def _accumulate_time(seconds: float, chunk: list) -> None:
+    units = len(chunk)
     _log["total_seconds"] += seconds
     if _session is not None:
         _session["seconds"] += seconds
-        _session["photos"] += photos
+        _session["photos"] += units
+    if units <= 0:
+        return
+    # Attribute this chunk's wall time to each index type it touched, so every
+    # type's ETA uses its own observed rate (faces is far slower than locations).
+    # Chunks are single-type except at a type boundary, so a per-item split by
+    # count is exact in practice.
+    counts: dict[str, int] = {}
+    for _photo, t in chunk:
+        counts[t.name] = counts.get(t.name, 0) + 1
+    for name, cnt in counts.items():
+        share = seconds * (cnt / units)
+        dq = _recent.setdefault(name, deque())
+        dq.append((share, cnt))
+        _recent_units[name] = _recent_units.get(name, 0) + cnt
+        _recent_seconds[name] = _recent_seconds.get(name, 0.0) + share
+        # Drop the oldest samples until the window holds ~ETA_WINDOW_UNITS photos,
+        # keeping the sample that crosses the threshold so one big chunk can't
+        # empty it.
+        while len(dq) > 1 and _recent_units[name] - dq[0][1] >= ETA_WINDOW_UNITS:
+            old_seconds, old_units = dq.popleft()
+            _recent_units[name] -= old_units
+            _recent_seconds[name] -= old_seconds
 
 
 # --------------------------------------------------------------------------- #
@@ -393,10 +560,11 @@ def _safe_process(item, engine_errors) -> Optional[tuple]:
     except engine_errors as exc:
         return ("engine", str(exc))
     except Exception as exc:
-        # Record an empty result so a bad photo is not retried forever.
-        print(f"[backend] face indexing skipped {photo.get('path')}: {exc}")
-        with _sec_lock:
-            _faces[photo["id"]] = {"indexed_at": _now(), "faces": [], "error": "failed"}
+        # Record an error result against this pass so a bad photo is not retried
+        # forever. Routed through the index type, so a locations failure does not
+        # accidentally write a faces record (or vice versa).
+        print(f"[backend] {t.name} indexing skipped {photo.get('path')}: {exc}")
+        t.record_error(photo["id"])
         return None
 
 
@@ -440,7 +608,7 @@ def _process_pending(pending: list, engine_errors) -> str:
                 results = list(pool.map(lambda it: _safe_process(it, engine_errors), chunk))
             else:
                 results = [_safe_process(chunk[0], engine_errors)]
-            _accumulate_time(time.monotonic() - start, len(chunk))
+            _accumulate_time(time.monotonic() - start, chunk)
 
             for r in results:
                 if r and r[0] == "engine":
@@ -521,9 +689,10 @@ def _worker_loop() -> None:
 # --------------------------------------------------------------------------- #
 
 def start() -> None:
-    """Launch the background worker once. No-op if disabled or already running."""
+    """Launch the background worker once. No-op if disabled, already running, or
+    no library is set up yet (nothing to index, and no folder to write to)."""
     global _started
-    if _started or not ENABLED:
+    if _started or not ENABLED or not imaging.has_library():
         return
     _started = True
     threading.Thread(target=_worker_loop, daemon=True, name="secondary-index").start()
@@ -556,12 +725,16 @@ def status() -> dict:
         total_units = n * num_types
         done_units = sum(t.count_done() for t in REGISTRY)
         spent = _log["total_seconds"]
+        recent_units = dict(_recent_units)
+        recent_seconds = dict(_recent_seconds)
         per_type = {}
+        per_type_remaining = {}
         for t in REGISTRY:
             entry = {"done": t.count_done(), "total": n}
             if t.name == "faces":
                 entry["people"] = len(_people)
             per_type[t.name] = entry
+            per_type_remaining[t.name] = max(0, n - t.count_done())
         state = _worker_state
         error = _worker_error
         mode = _mode
@@ -572,9 +745,27 @@ def status() -> dict:
         frac = done_units / total_units
         percent = 100.0 * frac
 
-    if frac > 0:
-        estimate = spent / frac
-        remaining = max(0.0, estimate - spent)
+    remaining_units = max(0, total_units - done_units)
+    # Project each type's remaining work from its own trailing rate, summing into
+    # one ETA. A type with no samples yet (e.g. the next type hasn't started)
+    # borrows the overall rate so its work is still counted. With no samples at
+    # all (the worker just (re)started) we report no ETA rather than projecting
+    # from the stale cumulative average, which on a resume reads as a near-zero
+    # "almost done" while real work remains.
+    total_recent_units = sum(recent_units.values())
+    total_recent_seconds = sum(recent_seconds.values())
+    if remaining_units <= 0:
+        remaining = 0.0
+    elif total_recent_units > 0 and total_recent_seconds > 0:
+        global_rate = total_recent_seconds / total_recent_units
+        remaining = 0.0
+        for name, rem in per_type_remaining.items():
+            if rem <= 0:
+                continue
+            ru = recent_units.get(name, 0)
+            rs = recent_seconds.get(name, 0.0)
+            rate = (rs / ru) if ru > 0 and rs > 0 else global_rate
+            remaining += rate * rem
     else:
         remaining = None
 
@@ -741,6 +932,65 @@ def photo_faces(photo_id: str) -> list[dict]:
     return out
 
 
+def photo_location(photo_id: str) -> Optional[dict]:
+    """The geocoded place for one photo, for the info panel's map.
+
+    Returns `{lat, lon, label, query}`, or None when the photo has no usable GPS
+    or has not been location-indexed yet. `label` is a human place string like
+    "Boston, Massachusetts"; `query` is what the gallery search should run to
+    surface every photo from the same place. The stored place fields are
+    lowercase keyword tokens (what search scans), so we title-case them here for
+    display.
+    """
+    _ensure_state_loaded()
+    with _sec_lock:
+        rec = _locations.get(photo_id)
+        if not rec or "lat" not in rec:
+            return None
+        lat = rec["lat"]
+        lon = rec["lon"]
+        landmark = list(rec.get("landmark") or [])
+        city = list(rec.get("city") or [])
+        metro = list(rec.get("metro") or [])
+        state = list(rec.get("state") or [])
+        country = list(rec.get("country") or [])
+
+    def phrase(tokens: list[str]) -> str:
+        # The indexer appends a 2-letter code (postal abbr / ISO) next to the
+        # full name; drop it for display, then title-case the remaining words.
+        words = [t for t in tokens if len(t) > 2] or tokens
+        return " ".join(w.capitalize() for w in words)
+
+    # Most specific name first, then the major city it sits in (when that adds
+    # something), then the region: "Cathedral, Boston, Massachusetts".
+    primary = phrase(landmark) or phrase(city)
+    town = phrase(metro) or phrase(city)
+    region = phrase(state) or phrase(country)
+    parts = [primary]
+    if town and town != primary:
+        parts.append(town)
+    if region:
+        parts.append(region)
+    label = ", ".join(p for p in parts if p)
+
+    # Click-to-search runs the broadest place that still groups well: the major
+    # city, falling back to the nearest town, then landmark, then region.
+    query = (
+        " ".join(metro)
+        or " ".join(city)
+        or " ".join(landmark)
+        or " ".join(state)
+        or " ".join(country)
+    ).strip()
+
+    return {
+        "lat": lat,
+        "lon": lon,
+        "label": label or "Unknown location",
+        "query": query,
+    }
+
+
 def face_box(photo_id: str, face_index: int) -> Optional[list]:
     """The bounding box of one detected face, for cropping its avatar."""
     _ensure_state_loaded()
@@ -754,33 +1004,95 @@ def face_box(photo_id: str, face_index: int) -> Optional[list]:
         return faces_list[face_index].get("bbox")
 
 
-def search_photos(query: str, limit: int = 200) -> list[dict]:
-    """Photos tagged with everything in `query`, newest first, capped.
+# Month names and the common abbreviations, mapped to their 1-based month.
+_MONTHS: dict[str, int] = {}
+for _i, (_full, _abbr) in enumerate(
+    [
+        ("january", "jan"), ("february", "feb"), ("march", "mar"),
+        ("april", "apr"), ("may", "may"), ("june", "jun"),
+        ("july", "jul"), ("august", "aug"), ("september", "sep"),
+        ("october", "oct"), ("november", "nov"), ("december", "dec"),
+    ],
+    start=1,
+):
+    _MONTHS[_full] = _i
+    _MONTHS[_abbr] = _i
+_MONTHS["sept"] = 9  # the other common September short form
 
-    The query is split into words and every word must match: "ajaya maithili"
-    finds photos that contain a person matching "ajaya" AND a person matching
-    "maithili". Each word is matched (case-insensitive substring) against each
-    person's display name, including the default `Person N`, so clicking an
-    unnamed person still resolves to their photos.
+
+def _is_date_token(tok: str) -> bool:
+    """A 4-digit year, or a month name/abbreviation."""
+    return (tok.isdigit() and len(tok) == 4) or tok in _MONTHS
+
+
+def _date_match(tok: str, taken: Optional[str]) -> bool:
+    """Does a date-ish token match a photo's capture time (ISO `taken`)?
+
+    A 4-digit token matches the year; a month name/abbreviation matches the
+    month. `taken` looks like "2026-02-14T..." so the year is chars 0-3 and the
+    month is chars 5-6.
+    """
+    if not taken or len(taken) < 7:
+        return False
+    if tok.isdigit() and len(tok) == 4:
+        return taken[0:4] == tok
+    month = _MONTHS.get(tok)
+    if month is not None:
+        try:
+            return int(taken[5:7]) == month
+        except ValueError:
+            return False
+    return False
+
+
+def search_photos(query: str, limit: int = 200) -> list[dict]:
+    """Photos matching everything in `query`, newest first, capped.
+
+    The query is split into words and every word must match (AND). A single word
+    can match across three sources, and a photo qualifies for that word if ANY
+    source does:
+
+      * people   - a person whose display name contains the word (incl. the
+                   default `Person N`), so clicking an unnamed person still works
+      * location - a place keyword (landmark, city, state, country) contains the
+                   word, so "boston", "ma", and "usa" all resolve
+      * dates    - the word is a year or a month name matching the capture time
+
+    So "ajaya boston feb 2025" keeps only photos that contain a person matching
+    "ajaya", AND a place matching "boston", AND were taken in February, AND in
+    2025. Words are matched case-insensitively; location/people use substring
+    matching for consistency.
     """
     tokens = (query or "").lower().split()
     if not tokens:
         return []
     _ensure_state_loaded()
     import app  # lazy: avoid an import cycle (app imports this module)
+    by_id = app.BY_ID
     with _sec_lock:
         rev = _person_photos()
         names = {spid: _display_name(spid).lower() for spid in _people}
-        # For each word, the set of photos containing some person it matches.
+        loc = {pid: rec.get("keywords", []) for pid, rec in _locations.items()}
+        # For each word, the set of photos that satisfy it via any source.
         per_token: list[set[str]] = []
         for tok in tokens:
             ids: set[str] = set()
+            # people
             for spid, name in names.items():
                 if tok in name:
                     ids |= rev.get(int(spid), set())
+            # location
+            for pid, keywords in loc.items():
+                if any(tok in kw for kw in keywords):
+                    ids.add(pid)
+            # dates (only scan photos when the word actually looks like a date)
+            if _is_date_token(tok):
+                for pid, rec in by_id.items():
+                    if _date_match(tok, rec.get("taken")):
+                        ids.add(pid)
             per_token.append(ids)
         # A photo qualifies only if it satisfies every word (intersection).
         photo_ids = set.intersection(*per_token) if per_token else set()
-    records = [app.BY_ID[pid] for pid in photo_ids if pid in app.BY_ID]
+    records = [by_id[pid] for pid in photo_ids if pid in by_id]
     records.sort(key=lambda p: p.get("taken") or "", reverse=True)
     return records[:limit]

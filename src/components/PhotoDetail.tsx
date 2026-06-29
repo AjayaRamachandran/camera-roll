@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
-import { Info, LayoutGrid } from "lucide-react";
+import { ArrowLeft, Info, LayoutGrid } from "lucide-react";
 
 import { Photo, isVideo, photoUrl, thumbUrl } from "@/lib/photoApi";
 import { CellRect } from "./PhotoGrid";
@@ -15,8 +21,16 @@ interface PhotoDetailProps {
   /** Screen rect of the grid cell the user opened, for the grow animation. */
   origin: CellRect;
   onClose: () => void;
+  /** Switch to the full-library grid view from a filtered result. */
+  onShowFullGrid?: (photoIndex: number) => void;
+  /** Return to the filtered results grid view. */
+  onBackToResults?: () => void;
+  /** Whether this detail view was opened from a filtered search result. */
+  fromSearchResults?: boolean;
   /** Filter the gallery to a person, from a face in the info panel. */
   onSearchPerson?: (name: string) => void;
+  /** Filter the gallery to a place, from the map in the info panel. */
+  onSearchLocation?: (query: string) => void;
 }
 
 // Chrome insets so the photo never sits under the top controls or filmstrip.
@@ -25,7 +39,8 @@ const PAD_BOTTOM = 88;
 const PAD_X = 28;
 const SWIPE_THRESHOLD = 80; // px of drag that commits to the next/prev photo
 const ZOOM = 2.5; // scale factor for the double-click zoomed view
-const MORPH = "left 340ms cubic-bezier(0.2,0,0,1), top 340ms cubic-bezier(0.2,0,0,1), width 340ms cubic-bezier(0.2,0,0,1), height 340ms cubic-bezier(0.2,0,0,1)";
+const MORPH =
+  "left 340ms cubic-bezier(0.2,0,0,1), top 340ms cubic-bezier(0.2,0,0,1), width 340ms cubic-bezier(0.2,0,0,1), height 340ms cubic-bezier(0.2,0,0,1)";
 // Docked info panel: width it claims on the right, and the shared easing for the
 // nudge (image area shrinking, panel sliding in, top controls shifting left).
 const INFO_WIDTH = 360;
@@ -69,7 +84,11 @@ export default function PhotoDetail({
   startIndex,
   origin,
   onClose,
+  onShowFullGrid,
+  onBackToResults,
+  fromSearchResults = false,
   onSearchPerson,
+  onSearchLocation,
 }: PhotoDetailProps) {
   const [index, setIndex] = useState(startIndex);
   const [phase, setPhase] = useState<Phase>("opening");
@@ -129,7 +148,9 @@ export default function PhotoDetail({
     if (phase !== "opening") return;
     const id = requestAnimationFrame(() => {
       setHeroAnimating(true);
-      setHeroRect(fitRect(photos[startIndex], window.innerWidth, window.innerHeight));
+      setHeroRect(
+        fitRect(photos[startIndex], window.innerWidth, window.innerHeight),
+      );
     });
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,7 +169,7 @@ export default function PhotoDetail({
           top: origin.top,
           width: origin.size,
           height: origin.size,
-        })
+        }),
       );
     } else {
       setPhase("closing");
@@ -241,8 +262,8 @@ export default function PhotoDetail({
       setPan(
         clampPan(
           panStart.current.x + (e.clientX - ptrStart.current.x),
-          panStart.current.y + (e.clientY - ptrStart.current.y)
-        )
+          panStart.current.y + (e.clientY - ptrStart.current.y),
+        ),
       );
       return;
     }
@@ -357,9 +378,7 @@ export default function PhotoDetail({
   const slide = (i: number) => {
     const p = photos[i];
     if (!p)
-      return (
-        <div className="h-screen shrink-0" style={{ width: contentW }} />
-      );
+      return <div className="h-screen shrink-0" style={{ width: contentW }} />;
     const r = fitRect(p, contentW, vh);
     // Only the current slide zooms/pans. Keep an identity transform on it even
     // when not zoomed so toggling animates the scale smoothly; panning drags
@@ -457,7 +476,10 @@ export default function PhotoDetail({
         <>
           <div
             className="absolute left-0 top-0 bottom-0 overflow-hidden"
-            style={{ right: showInfo ? INFO_WIDTH : 0, transition: `right ${NUDGE}` }}
+            style={{
+              right: showInfo ? INFO_WIDTH : 0,
+              transition: `right ${NUDGE}`,
+            }}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -487,6 +509,16 @@ export default function PhotoDetail({
               transition: `right ${NUDGE}, transform 0.12s ease, --refract-gb 0.08s ease`,
             }}
           >
+            {fromSearchResults && onBackToResults && (
+              <button
+                type="button"
+                aria-label="Back to search results"
+                onClick={onBackToResults}
+                className="grid place-items-center rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <ArrowLeft size={18} />
+              </button>
+            )}
             <button
               type="button"
               aria-label="Photo details"
@@ -497,8 +529,12 @@ export default function PhotoDetail({
             </button>
             <button
               type="button"
-              aria-label="Back to grid"
-              onClick={close}
+              aria-label={
+                fromSearchResults ? "Show full library" : "Back to grid"
+              }
+              onClick={
+                fromSearchResults ? () => onShowFullGrid?.(index) : close
+              }
               className="grid place-items-center rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
             >
               <LayoutGrid size={18} />
@@ -517,7 +553,11 @@ export default function PhotoDetail({
             }}
             aria-hidden={!showInfo}
           >
-            <InfoPopover photo={photo} onSearchPerson={onSearchPerson} />
+            <InfoPopover
+              photo={photo}
+              onSearchPerson={onSearchPerson}
+              onSearchLocation={onSearchLocation}
+            />
           </div>
 
           {/* Floating scrub controls for the current video, centered over the

@@ -28,7 +28,7 @@ export default function ZoomStepper({ levels, value, onChange }: ZoomStepperProp
   // Centered with inset-x-0 + mx-auto rather than -translate-x-1/2, because
   // Refract drives its own `transform` for the hover lean/pop.
   return (
-    <Refract className="pointer-events-auto absolute bottom-6 inset-x-0 mx-auto z-30 flex w-fit items-center gap-1 rounded-full px-1.5 py-1 font-sans">
+    <Refract className="pointer-events-auto absolute bottom-4 inset-x-0 mx-auto z-30 flex w-fit items-center gap-1.5 rounded-full px-2 py-1.5 font-sans">
       <button
         type="button"
         aria-label="Show larger photos"

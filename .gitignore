@@ -13,6 +13,7 @@ src-tauri/target/
 # Python
 server/.venv/
 server/__pycache__/
+server/geodata/
 **/__pycache__/
 *.pyc
 

@@ -8,9 +8,10 @@ interface FaceIndexingScreenProps {
 }
 
 /**
- * The screen shown on launch while people are being found, before the gallery
- * opens. It runs at full speed (every core) so a fresh library finishes fast.
- * "Run in background" opens the app right away and lets the rest finish quietly.
+ * The screen shown on launch while the library is being indexed (faces grouped
+ * into people, photos reverse-geocoded into places), before the gallery opens.
+ * It runs at full speed (every core) so a fresh library finishes fast. "Run in
+ * background" opens the app right away and lets the rest finish quietly.
  */
 export default function FaceIndexingScreen({
   status,
@@ -24,7 +25,7 @@ export default function FaceIndexingScreen({
   return (
     <div className="absolute inset-0 flex items-center justify-center">
       <div className="flex w-80 flex-col items-center gap-4 text-center">
-        <p className="text-base text-(--frost-text)">Finding people in your photos</p>
+        <p className="text-base text-(--frost-text)">Indexing your library</p>
 
         <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div
@@ -34,7 +35,7 @@ export default function FaceIndexingScreen({
         </div>
 
         {total > 0 && (
-          <p className="font-code text-xs text-(--frost-text-dim)">
+          <p className="text-xs text-(--frost-text-dim)">
             {done} of {total}
           </p>
         )}

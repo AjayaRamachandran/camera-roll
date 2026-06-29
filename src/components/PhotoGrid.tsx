@@ -13,6 +13,8 @@ export interface CellRect {
 
 interface PhotoGridProps {
   index: IndexData;
+  /** Optional photo index to scroll into view when the full library is shown. */
+  focusIndex?: number | null;
   /** Opens the photo at `photoIndex`, growing from the clicked cell. */
   onOpen: (photoIndex: number, origin: CellRect) => void;
 }
@@ -42,7 +44,11 @@ interface PendingZoom {
  * and runs a scale animation out of that photo. The same anchor logic runs on
  * window resize so the viewed content stays put with no jitter.
  */
-export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
+export default function PhotoGrid({
+  index,
+  focusIndex,
+  onOpen,
+}: PhotoGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -102,8 +108,14 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
         // Find the photo under the viewport center in the old layout.
         const centerY = st + newVP / 2;
         const tileIdx = Math.max(0, Math.floor(centerY / prevW));
-        const cr = Math.max(0, Math.min(g - 1, Math.floor((centerY - tileIdx * prevW) / prevCS)));
-        const focal = Math.min(index.count - 1, Math.max(0, tileIdx * cap + cr * g));
+        const cr = Math.max(
+          0,
+          Math.min(g - 1, Math.floor((centerY - tileIdx * prevW) / prevCS)),
+        );
+        const focal = Math.min(
+          index.count - 1,
+          Math.max(0, tileIdx * cap + cr * g),
+        );
         const focalScreenY = tileIdx * prevW + cr * prevCS + prevCS / 2 - st;
 
         // Place that photo at the same screen position in the new layout.
@@ -139,11 +151,51 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
       setScrollTop(el.scrollTop);
       setIsScrolling(true);
       clearTimeout(scrollTimerRef.current);
-      scrollTimerRef.current = window.setTimeout(() => setIsScrolling(false), 1500);
+      scrollTimerRef.current = window.setTimeout(
+        () => setIsScrolling(false),
+        1500,
+      );
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
+
+  useLayoutEffect(() => {
+    if (
+      focusIndex === null ||
+      focusIndex === undefined ||
+      focusIndex < 0 ||
+      focusIndex >= index.count
+    ) {
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el || tileSize <= 0 || viewport <= 0) return;
+
+    const row = Math.floor(focusIndex / capacity);
+    const within = focusIndex % capacity;
+    const cr = Math.floor(within / grid);
+    const targetY = row * tileSize + cr * cellSize + cellSize / 2;
+    const maxScrollTop = Math.max(0, totalHeight - viewport);
+    const nextScrollTop = Math.min(
+      maxScrollTop,
+      Math.max(0, targetY - viewport / 2),
+    );
+
+    if (Math.abs(el.scrollTop - nextScrollTop) > 1) {
+      el.scrollTop = nextScrollTop;
+      setScrollTop(nextScrollTop);
+    }
+  }, [
+    focusIndex,
+    index.count,
+    capacity,
+    cellSize,
+    grid,
+    tileSize,
+    totalHeight,
+    viewport,
+  ]);
 
   // After a level switch, re-anchor the scroll and play the zoom.
   useLayoutEffect(() => {
@@ -162,7 +214,7 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
       requestAnimationFrame(() => {
         setScaleTransition(true);
         setScale(1);
-      })
+      }),
     );
     return () => cancelAnimationFrame(id);
   }, [grid]);
@@ -176,12 +228,16 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
     // Photo under the viewport center is the zoom anchor.
     const centerY = scrollTop + viewport / 2;
     const row = Math.floor(centerY / tileSize);
-    const cr = Math.min(grid - 1, Math.floor((centerY - row * tileSize) / oldCell));
+    const cr = Math.min(
+      grid - 1,
+      Math.floor((centerY - row * tileSize) / oldCell),
+    );
     const cc = Math.min(grid - 1, Math.floor(width / 2 / oldCell));
     let focal = row * capacity + cr * grid + cc;
     focal = Math.min(index.count - 1, Math.max(0, focal));
 
-    const focalScreenY = row * tileSize + cr * oldCell + oldCell / 2 - scrollTop;
+    const focalScreenY =
+      row * tileSize + cr * oldCell + oldCell / 2 - scrollTop;
 
     const newCap = next * next;
     const nTile = Math.floor(focal / newCap);
@@ -193,7 +249,10 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
 
     const newRows = Math.ceil(index.count / newCap);
     const maxScroll = Math.max(0, newRows * tileSize - viewport);
-    const newScrollTop = Math.min(maxScroll, Math.max(0, focalY - focalScreenY));
+    const newScrollTop = Math.min(
+      maxScroll,
+      Math.max(0, focalY - focalScreenY),
+    );
 
     pending.current = {
       ratio: oldCell / newCell,
@@ -204,7 +263,8 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
   };
 
   // Visible rows plus one buffer row on each side.
-  const firstRow = tileSize > 0 ? Math.max(0, Math.floor(scrollTop / tileSize) - 1) : 0;
+  const firstRow =
+    tileSize > 0 ? Math.max(0, Math.floor(scrollTop / tileSize) - 1) : 0;
   const lastRow =
     tileSize > 0
       ? Math.min(nRows - 1, Math.ceil((scrollTop + viewport) / tileSize) + 1)
@@ -213,13 +273,19 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
   // Month/year of the topmost visible row.
   let dateLabel = "";
   if (tileSize > 0 && index.count > 0) {
-    const topRow = Math.min(nRows - 1, Math.max(0, Math.floor(scrollTop / tileSize)));
+    const topRow = Math.min(
+      nRows - 1,
+      Math.max(0, Math.floor(scrollTop / tileSize)),
+    );
     const firstPhotoIdx = Math.min(index.count - 1, topRow * capacity);
     const taken = index.photos[firstPhotoIdx]?.taken;
     if (taken) {
       const d = new Date(taken);
       if (!isNaN(d.getTime())) {
-        dateLabel = d.toLocaleString(undefined, { month: "long", year: "numeric" });
+        dateLabel = d.toLocaleString(undefined, {
+          month: "long",
+          year: "numeric",
+        });
       }
     }
   }
@@ -227,7 +293,9 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
   // Overlay scrollbar geometry.
   const showScrollbar = isScrolling || isHovered || isDragging;
   const thumbH =
-    totalHeight > viewport ? Math.max(32, (viewport / totalHeight) * viewport) : 0;
+    totalHeight > viewport
+      ? Math.max(32, (viewport / totalHeight) * viewport)
+      : 0;
   const thumbTop =
     totalHeight > viewport
       ? (scrollTop / (totalHeight - viewport)) * (viewport - thumbH)
@@ -259,7 +327,10 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
       const dy = mv.clientY - startY;
       const newST = Math.max(
         0,
-        Math.min(totalHeight - viewport, startST + (dy * (totalHeight - viewport)) / track)
+        Math.min(
+          totalHeight - viewport,
+          startST + (dy * (totalHeight - viewport)) / track,
+        ),
       );
       scrollRef.current.scrollTop = newST;
     };
@@ -299,7 +370,7 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
             }}
           >
             <PlayBadge size={badgeSize} />
-          </div>
+          </div>,
         );
       }
     }
@@ -340,7 +411,7 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
               size: renderedCell,
             });
           }}
-        />
+        />,
       );
     }
   }
@@ -419,10 +490,8 @@ export default function PhotoGrid({ index, onOpen }: PhotoGridProps) {
       )}
 
       {dateLabel && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 px-5 pt-6 pb-8 bg-gradient-to-b from-black/45 to-transparent">
-          <span className="text-3xl font-bold">
-            {dateLabel}
-          </span>
+        <div className="pointer-events-none absolute inset-x-0 top-0 px-5 pt-6 pb-8 bg-linear-to-b from-black/45 to-transparent">
+          <span className="text-3xl font-bold">{dateLabel}</span>
         </div>
       )}
 

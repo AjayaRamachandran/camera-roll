@@ -38,7 +38,7 @@ export default function LoadingLibrary({ status, error }: LoadingLibraryProps) {
             </div>
 
             {total > 0 && (
-              <p className="font-code text-xs text-(--frost-text-dim)">
+              <p className="text-xs text-(--frost-text-dim)">
                 {done} of {total}
               </p>
             )}
