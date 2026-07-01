@@ -10,6 +10,20 @@
 // Must match PORT in server/main.py / python_server.rs.
 const BASE = "http://127.0.0.1:8756";
 
+// Cache-busting token for the active library, set when the index loads (see
+// getIndex). Appended to every asset URL so the webview's HTTP cache is keyed
+// per library: switching libraries restarts the backend and reloads the page,
+// but the cache survives, and asset URLs like /megatile/4/0 or /people/1/face
+// are identical across libraries. Without this, the reloaded page would serve
+// the previous library's cached image for the same URL.
+let assetVersion = "";
+
+/** Append the current library's cache token to an asset URL. */
+const versioned = (url: string) =>
+  assetVersion
+    ? `${url}${url.includes("?") ? "&" : "?"}v=${assetVersion}`
+    : url;
+
 /** One photo as stored in the index. */
 export interface Photo {
   id: string;
@@ -41,6 +55,13 @@ export interface IndexData {
   tile_px: number;
   count: number;
   photos: Photo[];
+  /**
+   * Token unique to the active library. Every asset URL is versioned with it so
+   * one library's cached bytes can never be served for another: many asset URLs
+   * (e.g. /megatile/4/0, /people/1/face) are position/id-keyed and therefore
+   * identical across libraries, which otherwise collide in the webview cache.
+   */
+  library: string;
 }
 
 export interface IndexStatus {
@@ -117,7 +138,12 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 export const getConfig = () => getJSON<AppConfig>("/config");
-export const getIndex = () => getJSON<IndexData>("/index");
+export const getIndex = () =>
+  getJSON<IndexData>("/index").then((d) => {
+    // Bind the cache token before any asset URL is built for this library.
+    assetVersion = d.library || "";
+    return d;
+  });
 export const getStatus = () => getJSON<IndexStatus>("/index/status");
 
 /** Whether the user still needs to choose a data folder or add a library. */
@@ -148,6 +174,14 @@ export const addLibrary = (path: string) => postJSON("/libraries", { path });
 /** Select an already-registered library to view. */
 export const switchLibrary = (source: string) =>
   postJSON("/libraries/switch", { source });
+
+/**
+ * Unregister a library and delete its index data. The source photo folder is
+ * never touched. If the removed library was active, the backend falls back to
+ * another (or the setup screen when none remain).
+ */
+export const removeLibrary = (source: string) =>
+  postJSON("/libraries/remove", { source });
 export const getSecondaryStatus = () =>
   getJSON<SecondaryStatus>("/index/secondary/status");
 
@@ -195,8 +229,13 @@ export async function mergePeople(source: number, target: number): Promise<void>
   if (!res.ok) throw new Error(`merge -> HTTP ${res.status}`);
 }
 
-/** URL for a person's circular avatar (a cropped headshot). */
-export const personFaceUrl = (id: number) => `${BASE}/people/${id}/face`;
+/**
+ * URL for a person's circular avatar (a cropped headshot). Versioned per library
+ * because person ids restart at 1 in every library, so `/people/1/face` is the
+ * same URL everywhere and would otherwise reuse another library's cached face.
+ */
+export const personFaceUrl = (id: number) =>
+  versioned(`${BASE}/people/${id}/face`);
 
 /** One face detected in a specific photo, and the person it belongs to. */
 export interface PhotoFace {
@@ -217,7 +256,7 @@ export const getPhotoFaces = (photoId: string) =>
 
 /** URL for a circular crop of one detected face within a photo. */
 export const photoFaceUrl = (photoId: string, index: number) =>
-  `${BASE}/photo/${photoId}/face/${index}`;
+  versioned(`${BASE}/photo/${photoId}/face/${index}`);
 
 /** Where a photo was taken, when it carries usable GPS. */
 export interface PhotoLocation {
@@ -237,11 +276,11 @@ export const getPhotoLocation = (photoId: string) =>
 
 /** URL for a composed mega-tile image at a given zoom level (grid dimension). */
 export const megatileUrl = (grid: number, tile: number) =>
-  `${BASE}/megatile/${grid}/${tile}`;
+  versioned(`${BASE}/megatile/${grid}/${tile}`);
 /** URL for a single 64x64 thumbnail. */
-export const thumbUrl = (id: string) => `${BASE}/thumb/${id}`;
+export const thumbUrl = (id: string) => versioned(`${BASE}/thumb/${id}`);
 /** URL for a display-ready full-resolution image, or the original video file. */
-export const photoUrl = (id: string) => `${BASE}/photo/${id}`;
+export const photoUrl = (id: string) => versioned(`${BASE}/photo/${id}`);
 
 /** Whether this item is a video (older indexes only stored photos). */
 export const isVideo = (p: Photo) => p.kind === "video";

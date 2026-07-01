@@ -189,6 +189,39 @@ def set_current(root: Path, source: str) -> Optional[dict]:
     return lib
 
 
+def remove_library(root: Path, source: str) -> Optional[dict]:
+    """Unregister a library and delete its index folder, keeping source photos.
+
+    Removes the registry entry and recursively deletes only that library's index
+    subfolder (thumbnails, mega-tiles, faces/people/locations, etc.). The source
+    photo folder is never touched, nor is the shared `models` folder. If the
+    removed library was the active one, `current` falls back to the first
+    remaining library (or None when none are left, dropping to setup).
+
+    Returns the removed entry, or None if no such library was registered.
+    """
+    reg = load_registry(root)
+    lib = find_library(reg, source)
+    if lib is None:
+        return None
+
+    target = _norm(source)
+    reg["libraries"] = [
+        entry for entry in reg["libraries"] if _norm(entry["source"]) != target
+    ]
+    if reg["current"] and _norm(reg["current"]) == target:
+        reg["current"] = reg["libraries"][0]["source"] if reg["libraries"] else None
+
+    # Delete the index folder for this library only. Guard against a missing or
+    # oddly-shaped entry so a bad `dir` can never escape the indexes root.
+    index_dir = root / lib["dir"]
+    if lib.get("dir") and index_dir.exists() and index_dir.parent == root:
+        shutil.rmtree(index_dir, ignore_errors=True)
+
+    save_registry(root, reg)
+    return lib
+
+
 def list_libraries(root: Optional[Path]) -> dict:
     """Registry contents shaped for the UI: each library plus a `current` flag."""
     if root is None:

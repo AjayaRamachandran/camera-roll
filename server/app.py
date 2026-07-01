@@ -7,6 +7,7 @@ thumbnail and mega-tile phases (creating the pool is the expensive part, so we
 do it once per scan). main.py is a thin launcher that imports `app` from here.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -15,7 +16,7 @@ import threading
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from PIL import Image, ImageOps
@@ -331,6 +332,23 @@ def switch_library(payload: dict) -> dict:
     return {"ok": True}
 
 
+@app.post("/libraries/remove")
+def remove_library(payload: dict) -> dict:
+    """Unregister a library and delete its index data (never the source photos).
+
+    Like switching, this only rewrites the registry and disk; the path-bound
+    globals rebind on the next restart, which the Rust shell performs right after
+    this call so the app reopens on a remaining library (or the setup screen)."""
+    source = str(payload.get("source", "")).strip()
+    root = _live_root()
+    if root is None:
+        raise HTTPException(status_code=409, detail="indexes folder not set")
+    lib = libraries.remove_library(root, source)
+    if lib is None:
+        raise HTTPException(status_code=404, detail="unknown library")
+    return {"ok": True}
+
+
 @app.get("/index/status")
 def index_status() -> dict:
     with _state_lock:
@@ -386,15 +404,28 @@ def people_merge(payload: dict) -> dict:
         raise HTTPException(status_code=404, detail="unknown person")
 
 
-def _face_crop_response(photo_id: str, bbox) -> Response:
+def _face_crop_response(photo_id: str, bbox, request: Request) -> Response:
     """A square headshot JPEG cropped around `bbox` in the given photo.
 
     The stored box is in the analysis-image coordinate space, so we decode the
     source at the same size used during indexing, crop a padded square around
-    the face, and return a small JPEG (cached by the webview).
+    the face, and return a small JPEG.
+
+    Cached via revalidation (ETag + no-cache) rather than a fixed max-age. The
+    ETag is keyed on the source photo id (a hash of the file path, so unique
+    across libraries) and the face box, so a repeat view is a cheap 304 but the
+    avatar can never be reused for a different library's person: `/people/1/face`
+    is the same URL in every library, yet person 1's cover photo differs, so the
+    ETag differs and the webview refetches instead of serving a stale crop.
     """
     if not bbox:
         raise HTTPException(status_code=404, detail="no face")
+
+    etag = 'W/"' + hashlib.sha1(f"{photo_id}:{bbox}".encode("utf-8")).hexdigest()[:16] + '"'
+    revalidate = {"ETag": etag, "Cache-Control": "no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=revalidate)
+
     photo = BY_ID.get(photo_id)
     if not photo:
         raise HTTPException(status_code=404, detail="photo missing")
@@ -420,17 +451,17 @@ def _face_crop_response(photo_id: str, bbox) -> Response:
     return Response(
         content=buf.getvalue(),
         media_type="image/jpeg",
-        headers={"Cache-Control": "max-age=3600"},
+        headers=revalidate,
     )
 
 
 @app.get("/people/{pid}/face")
-def people_face(pid: int):
+def people_face(pid: int, request: Request):
     """A square headshot crop for a person's avatar (their cover face)."""
     cover = secondary_index.person_cover(pid)
     if not cover:
         raise HTTPException(status_code=404, detail="no face for person")
-    return _face_crop_response(cover["photo_id"], cover.get("bbox"))
+    return _face_crop_response(cover["photo_id"], cover.get("bbox"), request)
 
 
 @app.get("/photo/{pid}/faces")
@@ -440,9 +471,9 @@ def photo_faces(pid: str) -> dict:
 
 
 @app.get("/photo/{pid}/face/{idx}")
-def photo_face_crop(pid: str, idx: int):
+def photo_face_crop(pid: str, idx: int, request: Request):
     """A square crop of one detected face in a photo (by detection index)."""
-    return _face_crop_response(pid, secondary_index.face_box(pid, idx))
+    return _face_crop_response(pid, secondary_index.face_box(pid, idx), request)
 
 
 @app.get("/photo/{pid}/location")
@@ -475,6 +506,14 @@ def get_index() -> JSONResponse:
                 "tile_px": TILE_PX,
                 "count": len(PHOTOS),
                 "photos": PHOTOS,
+                # A token unique to the active library (its index-folder name),
+                # so the frontend can version every asset URL and no library's
+                # cached bytes (mega-tiles, thumbnails, ...) can be reused for
+                # another. Position-keyed URLs like /megatile/4/0 are otherwise
+                # identical across libraries and collide in the webview cache.
+                "library": imaging.ACTIVE_LIBRARY["dir"]
+                if imaging.ACTIVE_LIBRARY
+                else "",
             }
         )
 

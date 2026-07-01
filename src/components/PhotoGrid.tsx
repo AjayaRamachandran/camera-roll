@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { IndexData, isVideo, megatileUrl } from "@/lib/photoApi";
+import { IndexData, getLibraries, isVideo, megatileUrl } from "@/lib/photoApi";
 import PlayBadge from "./PlayBadge";
 import ZoomStepper from "./ZoomStepper";
 
@@ -53,6 +53,14 @@ export default function PhotoGrid({
   const [width, setWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(0);
+
+  // Name of the library currently being viewed, shown in the top overlay.
+  const [libraryName, setLibraryName] = useState("");
+  useEffect(() => {
+    getLibraries()
+      .then((libs) => setLibraryName(libs.find((l) => l.current)?.name ?? ""))
+      .catch(() => setLibraryName(""));
+  }, []);
 
   const levels = index.tile_grids;
   const [grid, setGrid] = useState(levels[0]);
@@ -270,20 +278,24 @@ export default function PhotoGrid({
       ? Math.min(nRows - 1, Math.ceil((scrollTop + viewport) / tileSize) + 1)
       : 0;
 
-  // Month/year of the topmost visible row.
+  // Date of the topmost visible cell-row. Each megatile stacks `grid` cell-rows
+  // of `cellSize` each, so key off cell-rows (not whole tiles) to update as each
+  // row scrolls past.
   let dateLabel = "";
-  if (tileSize > 0 && index.count > 0) {
-    const topRow = Math.min(
-      nRows - 1,
-      Math.max(0, Math.floor(scrollTop / tileSize)),
+  if (cellSize > 0 && index.count > 0) {
+    const totalCellRows = Math.ceil(index.count / grid);
+    const topCellRow = Math.min(
+      totalCellRows - 1,
+      Math.max(0, Math.floor(scrollTop / cellSize)),
     );
-    const firstPhotoIdx = Math.min(index.count - 1, topRow * capacity);
+    const firstPhotoIdx = Math.min(index.count - 1, topCellRow * grid);
     const taken = index.photos[firstPhotoIdx]?.taken;
     if (taken) {
       const d = new Date(taken);
       if (!isNaN(d.getTime())) {
         dateLabel = d.toLocaleString(undefined, {
           month: "long",
+          day: "numeric",
           year: "numeric",
         });
       }
@@ -489,11 +501,14 @@ export default function PhotoGrid({
         </div>
       )}
 
-      {dateLabel && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 px-5 pt-6 pb-8 bg-linear-to-b from-black/45 to-transparent">
-          <span className="text-3xl font-bold">{dateLabel}</span>
-        </div>
-      )}
+      <div className="pointer-events-none absolute inset-x-0 top-0 px-5 pt-6 pb-8 bg-linear-to-b from-black/45 to-transparent">
+        <span className="block text-3xl font-bold">{libraryName}</span>
+        {dateLabel && (
+          <span className="mt-0.5 block text-lg font-bold text-white">
+            {dateLabel}
+          </span>
+        )}
+      </div>
 
       {levels.length > 1 && (
         <ZoomStepper levels={levels} value={grid} onChange={changeGrid} />

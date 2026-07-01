@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { Pause, Play } from "lucide-react";
+import { FastForward, Pause, Play, Rewind } from "lucide-react";
 
 import { formatDuration } from "@/lib/photoApi";
 import Refract from "./Refract";
@@ -52,6 +52,16 @@ export default function VideoScrubBar({ video }: VideoScrubBarProps) {
     else video.pause();
   };
 
+  // Jump the playhead by a relative number of seconds, clamped to the clip.
+  const skip = (secs: number) => {
+    if (!video || !isFinite(video.duration)) return;
+    video.currentTime = Math.min(
+      video.duration,
+      Math.max(0, video.currentTime + secs),
+    );
+    setCurrent(video.currentTime);
+  };
+
   // Map a pointer x within the track to a time and seek there.
   const seekTo = (clientX: number) => {
     const el = trackRef.current;
@@ -80,7 +90,7 @@ export default function VideoScrubBar({ video }: VideoScrubBarProps) {
 
   return (
     <Refract
-      className="flex items-center gap-3 rounded-full px-3.5 pr-5 py-2 select-none"
+      className="flex items-center gap-3 rounded-full px-3.5 py-2 select-none"
       // Don't let scrub gestures bubble to the swipe/close handlers behind it.
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
@@ -91,7 +101,7 @@ export default function VideoScrubBar({ video }: VideoScrubBarProps) {
         onClick={toggle}
         className="grid place-items-center rounded-full p-1 text-white/90 transition-colors hover:text-white"
       >
-        {playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+        {playing ? <Pause size={18} fill="currentColor" strokeWidth={1} /> : <Play size={18} fill="currentColor" strokeWidth={0} />}
       </button>
 
       <span className="text-sm text-white/80 tabular-nums">
@@ -119,6 +129,23 @@ export default function VideoScrubBar({ video }: VideoScrubBarProps) {
       <span className="text-sm text-white/80 tabular-nums">
         {formatDuration(duration)}
       </span>
+
+      <button
+        type="button"
+        aria-label="Rewind 10 seconds"
+        onClick={() => skip(-10)}
+        className="grid place-items-center rounded-full p-1 text-white transition-colors hover:text-white"
+      >
+        <Rewind size={17} fill="currentColor" strokeWidth={0} />
+      </button>
+      <button
+        type="button"
+        aria-label="Skip 10 seconds"
+        onClick={() => skip(10)}
+        className="grid place-items-center rounded-full p-1 text-white transition-colors hover:text-white"
+      >
+        <FastForward size={17} fill="currentColor" strokeWidth={0} />
+      </button>
     </Refract>
   );
 }

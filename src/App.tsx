@@ -315,10 +315,13 @@ export default function App() {
           origin={selected.origin}
           fromSearchResults={selected.source === "filter"}
           onClose={() => setSelected(null)}
-          onShowFullGrid={(photoIndex) => {
+          onShowFullGrid={(photoId) => {
             setSelected(null);
-            setGalleryView("full");
-            setFullGridFocusIndex(photoIndex);
+            // Locate the photo within the full library and reveal it there,
+            // dropping the search so the whole grid is visible around it.
+            const fullIndex = index.photos.findIndex((p) => p.id === photoId);
+            clearSearch();
+            setFullGridFocusIndex(fullIndex >= 0 ? fullIndex : null);
           }}
           onBackToResults={() => {
             setSelected(null);

@@ -21,8 +21,8 @@ interface PhotoDetailProps {
   /** Screen rect of the grid cell the user opened, for the grow animation. */
   origin: CellRect;
   onClose: () => void;
-  /** Switch to the full-library grid view from a filtered result. */
-  onShowFullGrid?: (photoIndex: number) => void;
+  /** Reveal this photo within the full-library grid (by id), clearing search. */
+  onShowFullGrid?: (photoId: string) => void;
   /** Return to the filtered results grid view. */
   onBackToResults?: () => void;
   /** Whether this detail view was opened from a filtered search result. */
@@ -205,7 +205,6 @@ export default function PhotoDetail({
   };
 
   const toggleZoom = () => {
-    if (currentIsVideo) return; // videos don't zoom; the scrub bar owns gestures
     setPan({ x: 0, y: 0 });
     setZoomed((z) => !z);
   };
@@ -408,7 +407,16 @@ export default function PhotoDetail({
           autoPlay
           playsInline
           className="absolute object-contain"
-          style={{ ...geom, transition: geomTransition }}
+          style={{
+            ...geom,
+            transform: `translate(${z ? pan.x : 0}px, ${z ? pan.y : 0}px) scale(${z ? ZOOM : 1})`,
+            // Match the photo path: animate zoom + info-panel nudge, skip while
+            // actively panning so the frame tracks the cursor.
+            transition: !(zoomed && dragging.current)
+              ? `transform 220ms cubic-bezier(0.2,0,0,1), left ${NUDGE}, top ${NUDGE}, width ${NUDGE}, height ${NUDGE}`
+              : "none",
+            cursor: zoomed ? "grab" : undefined,
+          }}
         />
       ) : (
         <img
@@ -498,18 +506,17 @@ export default function PhotoDetail({
             </div>
           </div>
 
-          {/* Top controls: info + back-to-grid, in a frosted pill like the zoom
-              stepper. Offset below the window title bar. */}
-          <Refract
-            className="absolute z-30 flex items-center gap-1 rounded-full px-1.5 py-1"
-            style={{
-              top: "calc(var(--titlebar-height, 36px) + 8px)",
-              right: (showInfo ? INFO_WIDTH : 0) + 12,
-              // Keep the info-panel push plus the glass hover lean/brighten.
-              transition: `right ${NUDGE}, transform 0.12s ease, --refract-gb 0.08s ease`,
-            }}
-          >
-            {fromSearchResults && onBackToResults && (
+          {/* Back to search results: its own frosted pill in the top left,
+              shown only when this photo was opened from a search result. */}
+          {fromSearchResults && onBackToResults && (
+            <Refract
+              className="absolute z-30 flex items-center rounded-full px-1 py-1"
+              style={{
+                top: "calc(var(--titlebar-height, 36px) + 8px)",
+                left: 12,
+                transition: `transform 0.12s ease, --refract-gb 0.08s ease`,
+              }}
+            >
               <button
                 type="button"
                 aria-label="Back to search results"
@@ -518,7 +525,20 @@ export default function PhotoDetail({
               >
                 <ArrowLeft size={18} />
               </button>
-            )}
+            </Refract>
+          )}
+
+          {/* Top controls: info + grid, in a frosted pill like the zoom
+              stepper. Offset below the window title bar. */}
+          <Refract
+            className="absolute z-30 flex items-center gap-1 rounded-full px-1 py-1"
+            style={{
+              top: "calc(var(--titlebar-height, 36px) + 8px)",
+              right: (showInfo ? INFO_WIDTH : 0) + 12,
+              // Keep the info-panel push plus the glass hover lean/brighten.
+              transition: `right ${NUDGE}, transform 0.12s ease, --refract-gb 0.08s ease`,
+            }}
+          >
             <button
               type="button"
               aria-label="Photo details"
@@ -530,10 +550,10 @@ export default function PhotoDetail({
             <button
               type="button"
               aria-label={
-                fromSearchResults ? "Show full library" : "Back to grid"
+                fromSearchResults ? "Show this photo in all photos" : "Back to grid"
               }
               onClick={
-                fromSearchResults ? () => onShowFullGrid?.(index) : close
+                fromSearchResults ? () => onShowFullGrid?.(photo.id) : close
               }
               className="grid place-items-center rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
             >
