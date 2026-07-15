@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from PIL import Image, ImageOps
 
+import ffmpeg_bootstrap
 import imaging
 import libraries
 import secondary_index
@@ -167,6 +168,15 @@ def scan_library() -> None:
                 if os.path.splitext(name)[1].lower() in MEDIA_EXTS:
                     found.append(os.path.join(dirpath, name))
 
+        # First run with videos: if the library contains video files but the
+        # video tools are not available yet, fetch ffmpeg in the background and
+        # re-scan once it lands, so the videos get thumbnails with no manual
+        # install. Photos index right away meanwhile; only videos wait for it.
+        if not imaging.ffmpeg_ready() and any(
+            os.path.splitext(f)[1].lower() in VIDEO_EXTS for f in found
+        ):
+            ffmpeg_bootstrap.ensure_ffmpeg_async(on_success=_rescan_after_ffmpeg)
+
         found_set = set(found)
         known = {p["path"]: p for p in PHOTOS}
         surviving = [p for p in PHOTOS if p["path"] in found_set]
@@ -204,6 +214,20 @@ def scan_library() -> None:
     except Exception as exc:
         print(f"[backend] scan failed: {exc}")
         _set_status(state="error", message=str(exc))
+
+
+def _rescan_after_ffmpeg() -> None:
+    """Re-scan once the first-run ffmpeg download finishes, so videos skipped for
+    lack of it get indexed now.
+
+    Incremental: already-indexed photos are kept (they are still "known"), only
+    the videos are added; the fresh worker pool the scan spawns re-imports imaging
+    and picks up the just-downloaded binaries. No-op while a scan is already
+    running, so it never stacks a second pass on top of the first."""
+    with _state_lock:
+        if STATUS["state"] == "scanning":
+            return
+    threading.Thread(target=scan_library, daemon=True).start()
 
 
 # --------------------------------------------------------------------------- #

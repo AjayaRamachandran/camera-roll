@@ -1,0 +1,14 @@
+# Statically link the MSVC C runtime into the app executable.
+#
+# Without this, the built exe imports VCRUNTIME140.dll / VCRUNTIME140_1.dll at
+# runtime, which are only present if the "Visual C++ 2015-2022 Redistributable"
+# is installed. Most machines have it, but a truly clean Windows install may not,
+# and we ship no installer for it. Linking the CRT statically folds it into the
+# exe so the app launches with nothing preinstalled (the only remaining OS
+# dependency is WebView2, an OS component on Windows 11 and fetched on demand by
+# the NSIS installer on older Windows).
+#
+# The Universal CRT (api-ms-win-crt-*.dll / ucrtbase.dll) is a Windows component
+# on Windows 10+ and is intentionally left dynamic.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

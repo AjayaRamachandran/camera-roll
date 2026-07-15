@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from functools import reduce
 from math import gcd
@@ -50,12 +51,38 @@ VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"}
 MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 
 # ffmpeg/ffprobe drive video frame extraction and metadata. They are external
-# binaries (not Python deps), so we resolve them once and skip videos cleanly if
-# they are missing rather than crashing the whole scan.
-FFMPEG = shutil.which("ffmpeg")
-FFPROBE = shutil.which("ffprobe")
+# binaries (not Python deps). The packaged app does not bundle them; instead they
+# are downloaded on first run (see ffmpeg_bootstrap), so we look in that per-user
+# bin folder first and fall back to PATH (dev machines / manual installs). Videos
+# are skipped cleanly when neither is available rather than crashing the scan.
+import ffmpeg_bootstrap
+
+
+def _resolve_ffmpeg() -> tuple[Optional[str], Optional[str]]:
+    """Locate ffmpeg/ffprobe: the first-run download dir first, then PATH.
+
+    Each worker process re-imports this module, so a worker spawned after the
+    background download finished resolves the freshly downloaded binaries. The
+    main process only ever calls the live `ffmpeg_ready()` below, so its own
+    (possibly stale) module-level values never matter for video work.
+    """
+    fm = ffmpeg_bootstrap.ffmpeg_path()
+    fp = ffmpeg_bootstrap.ffprobe_path()
+    return (
+        str(fm) if fm else shutil.which("ffmpeg"),
+        str(fp) if fp else shutil.which("ffprobe"),
+    )
+
+
+FFMPEG, FFPROBE = _resolve_ffmpeg()
 if not (FFMPEG and FFPROBE):
-    print("[backend] ffmpeg/ffprobe not found on PATH; videos will be skipped")
+    print("[backend] ffmpeg not available yet; videos are skipped until it is fetched")
+
+
+def ffmpeg_ready() -> bool:
+    """Whether both ffmpeg and ffprobe are available right now (live check)."""
+    fm, fp = _resolve_ffmpeg()
+    return bool(fm and fp)
 
 # On Windows, keep the subprocess from flashing a console window for each call.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -75,6 +102,12 @@ GPS_LONGITUDE = 4
 
 
 def _find_config() -> Path:
+    # Frozen (PyInstaller) builds ship config.yaml inside the bundle, so read it
+    # from there: the packaged app has no source tree next to the executable.
+    if getattr(sys, "frozen", False):
+        bundled = Path(getattr(sys, "_MEIPASS", ".")) / "config.yaml"
+        if bundled.exists():
+            return bundled
     here = Path(__file__).resolve().parent
     candidates = [
         here.parent / "config.yaml",

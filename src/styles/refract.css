@@ -49,14 +49,19 @@
 .refract {
   /* Per-instance state, driven from JS. */
   --blur: 3px; /* current blur, scaled from the `blur` prop by element size */
-  --sa: 0.1; /* tint opacity, set from the `tint` prop */
   --refract-gb: 1; /* hover brightness */
   --nx: 0px; /* hover nudge toward the cursor, x */
   --ny: 0px; /* hover nudge toward the cursor, y */
   --sc: 1; /* hover scale */
 
-  background: rgba(38, 40, 46, var(--sa));
-  border-top: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(60, 62, 66, var(--sa));
+  /* A real inset box-shadow (unlike .refract-tint above, this one actually
+     uses the `inset` keyword) — a white glow hugging the inside of the
+     border. Safe to put directly on `.refract` since, unlike overflow, a
+     box-shadow doesn't touch the backdrop-filter/WebView2 constraint above. */
+  box-shadow: inset 0 5px 12px -4px rgba(255, 255, 255, 0.3),
+              inset 0 1px 3px 2px rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 1);
   border-bottom: 1px solid rgba(255, 255, 255, 0.55);
   /* The drop shadow is a separate painted layer (.refract-shadow below), NOT a
      box-shadow or filter: drop-shadow here. Over the app's transparent acrylic
@@ -107,6 +112,59 @@
   background: rgba(0, 0, 0, 0.3);
   filter: blur(16px);
   transform: translateY(6px);
+  pointer-events: none;
+}
+
+/* An interior tint, painted above the glass's own background but BEHIND any
+   children the consumer puts inside <Refract>. Retreated inward from every
+   edge via a positive `inset` before blurring, so the blur's glow dissipates
+   before it ever reaches the border — opaque in the middle, see-through at
+   the rim. This is what a real drop-shadow effect turned inward (rather than
+   outward) looks like.
+
+   A filter's blurred output isn't clipped by overflow on the SAME element, so
+   .refract-tint would otherwise bleed its blur past the glass's rounded
+   corners/edges. It's wrapped in .refract-tint-clip purely to clip that
+   bleed to the glass silhouette — overflow:hidden lives on this wrapper
+   instead of on `.refract` itself, since `.refract` is the element carrying
+   the backdrop-filter and WebView2 drops that entirely if its own element
+   clips overflow (see the note atop this file).
+
+   z-index:-1 is what actually puts it behind the children: an absolutely
+   positioned box with z-index:auto still paints AFTER plain (non-positioned)
+   in-flow content in stacking order, so without this it would sit on top of
+   whatever's inside the glass. */
+.refract-tint-clip {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.refract-tint {
+  position: absolute;
+  inset: 0px;
+  translate: 0 6px;
+  border-radius: inherit;
+  background: rgba(30, 30, 30, 0.5);
+  filter: blur(7px);
+  pointer-events: none;
+}
+
+/* A frame sitting exactly over the glass box (same trick as .refract-shadow:
+   inset:0 + border-radius:inherit tracks the box, including morphs) that adds
+   black side borders to complement the white top/bottom specular rim already
+   on `.refract`. Kept as its own layer instead of a border on `.refract`
+   itself so it doesn't interact with the backdrop-filter / displacement map,
+   which are keyed to the glass element's own box. */
+.refract-rim {
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border-left: 1.5px solid rgba(0, 0, 0, 0.55);
+  border-right: 1.5px solid rgba(0, 0, 0, 0.55);
   pointer-events: none;
 }
 

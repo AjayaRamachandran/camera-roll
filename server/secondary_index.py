@@ -40,6 +40,7 @@ from typing import Callable, Optional
 
 import geocode
 import imaging
+import models_bootstrap
 
 # --------------------------------------------------------------------------- #
 # Config
@@ -645,6 +646,14 @@ def _worker_loop() -> None:
         print(f"[backend] secondary index disabled: {exc}")
         return
 
+    # First run: fetch the face models in the background if they are missing, so
+    # face grouping just works without a manual download. Any other pass (e.g.
+    # locations) keeps running meanwhile; faces jobs are held back below until the
+    # models land, and the download wakes the worker to re-plan when it finishes.
+    models_bootstrap.ensure_models_async(
+        _faces_engine.MODELS_DIR, on_done=notify_index_changed
+    )
+
     _ensure_state_loaded()
     with _sec_lock:
         _load_log()
@@ -658,21 +667,28 @@ def _worker_loop() -> None:
             for t in REGISTRY:
                 t.prune(all_ids)
             done_sets = {t.name: t.done_ids() for t in REGISTRY}
+        # Hold back face jobs while the models are still downloading; every other
+        # pass proceeds. Once the download finishes, on_done wakes us to re-plan.
+        faces_ready = models_bootstrap.models_present(_faces_engine.MODELS_DIR)
         pending = [
             (p, t)
             for t in REGISTRY
             for p in photos
             if p["id"] not in done_sets[t.name]
+            and (t.name != "faces" or faces_ready)
         ]
 
         if not pending:
             _flush_all()
+            dl = models_bootstrap.status()["state"] in ("downloading", "extracting")
             with _sec_lock:
                 if _worker_error is None:
-                    _set_worker_state("idle")
+                    _set_worker_state("downloading-models" if dl else "idle")
             # The first full pass is done; settle into background so any later
             # incremental work (new photos) stays quiet without halting the app.
-            if _mode == "foreground":
+            # While the models are still downloading we stay in the foreground so
+            # the setup screen keeps showing its progress instead of vanishing.
+            if _mode == "foreground" and not dl:
                 _mode = "background"
             _changed_event.wait()
             _changed_event.clear()
@@ -781,6 +797,9 @@ def status() -> dict:
         "time_spent_seconds": round(spent, 1),
         "per_type": per_type,
         "error": error,
+        # First-run face-model download progress, so the UI can show "Setting up
+        # face search". state is idle until a download is actually needed.
+        "models": models_bootstrap.status(),
     }
 
 

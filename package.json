@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:server": "node scripts/build-server.mjs",
+    "build:all": "npm run build:server && npm run build",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",

@@ -63,9 +63,9 @@ export interface RefractProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
 }
 
-const DEFAULT_BLUR = 1.5;
-const DEFAULT_TINT = 0.4;
-const DEFAULT_REFRACTION = 0.08;
+const DEFAULT_BLUR = 3;
+const DEFAULT_TINT = 0.3;
+const DEFAULT_REFRACTION = 0.1;
 
 /** Reference box length the blur is calibrated against (the prototype orb). */
 const BLUR_REF = 64;
@@ -348,7 +348,7 @@ export default function Refract({
     el.style.setProperty("--refract-gb", "1");
   };
 
-  const filterValue = `blur(var(--blur)) saturate(2) brightness(var(--refract-gb)) url(#${filterId})`;
+  const filterValue = `blur(var(--blur)) saturate(2) brightness(calc(var(--refract-gb) * 1.2)) url(#${filterId})`;
 
   const mergedStyle: CSSProperties = {
     ["--sa" as string]: tint,
@@ -372,6 +372,18 @@ export default function Refract({
           window. inset:0 + border-radius:inherit makes it track the box and
           morph with it for free. See .refract-shadow in refract.css. */}
       <span className="refract-shadow" aria-hidden="true" />
+
+      {/* Interior tint: blurred and retreated from the edges so it's opaque in
+          the middle and fades out before the border. Wrapped in
+          .refract-tint-clip so the blur bleed is clipped to the glass
+          silhouette. See refract.css. */}
+      <span className="refract-tint-clip" aria-hidden="true">
+        <span className="refract-tint" aria-hidden="true" />
+      </span>
+
+      {/* Black left/right border complementing the white top/bottom rim on
+          `.refract`. See .refract-rim in refract.css. */}
+      <span className="refract-rim" aria-hidden="true" />
 
       {/* Per-instance displacement filter. The unique id is what keeps multiple
           glass surfaces from sharing (and corrupting) one another's map. */}

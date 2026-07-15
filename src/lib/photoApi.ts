@@ -90,9 +90,21 @@ export interface Library {
   current: boolean;
 }
 
+/** First-run face-model download progress (stdlib download, no extra deps). */
+export interface ModelDownload {
+  /** idle | downloading | extracting | done | error. */
+  state: string;
+  /** Bytes fetched so far. */
+  downloaded: number;
+  /** Total bytes to fetch, or 0 when the server hasn't sent a length. */
+  total: number;
+  /** A message when `state` is "error", else null. */
+  error: string | null;
+}
+
 /** Progress of background indexing that runs after the library is ready. */
 export interface SecondaryStatus {
-  /** Worker state: idle | indexing | paused-for-scan | error. */
+  /** Worker state: idle | indexing | paused-for-scan | downloading-models | error. */
   state: string;
   /** "foreground" (fast, halts the app) or "background" (quiet, single thread). */
   mode: "foreground" | "background";
@@ -110,6 +122,8 @@ export interface SecondaryStatus {
   time_spent_seconds: number;
   /** Per-feature breakdown (backend-defined; not surfaced in the UI yet). */
   per_type: Record<string, unknown>;
+  /** First-run face-model download progress. state is idle until one is needed. */
+  models: ModelDownload;
 }
 
 /** A recognized person, as shown in the People view. */

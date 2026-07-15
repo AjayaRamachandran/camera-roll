@@ -39,9 +39,43 @@ Expected response:
 
 ## How it's launched in the app
 
-The Rust side (`src-tauri/src/python_server.rs`) runs `python main.py` with the
-`PHOTOVIEWER_PORT` environment variable set, and terminates the process when the
-app exits. You never have to start this manually during normal use.
+The Rust side (`src-tauri/src/python_server.rs`) sets the `PHOTOVIEWER_PORT`
+environment variable and terminates the process when the app exits. You never
+have to start this manually during normal use. How it starts depends on the
+build:
+
+- **Dev (`tauri dev`):** runs `python main.py` from this source tree, preferring
+  `server/.venv` if present.
+- **Packaged (`tauri build`):** runs the self-contained executable produced by
+  PyInstaller (see Packaging below). The end user needs no Python install.
+
+## Packaging (self-contained Windows installer)
+
+`tauri build` produces a single NSIS installer that bundles a frozen copy of
+this server, so the user does not need Python or any pip packages.
+
+The freeze is driven by `scripts/build-server.mjs` (run via `npm run
+build:server`, and chained automatically from `tauri build` through the
+`build:all` script). It:
+
+1. uses `server/.venv` (which must already have `requirements.txt` installed),
+2. installs PyInstaller into that venv the first time,
+3. runs `server/camera-roll-server.spec` to produce
+   `server/dist/camera-roll-server/` (a onedir bundle),
+
+which `tauri.conf.json` then ships under the app's `server-bin` resource folder.
+`config.yaml` and `geodata/` are embedded inside the frozen bundle (read from
+`sys._MEIPASS` at runtime), so nothing external needs to sit next to the exe.
+
+To build the installer end to end:
+
+```bash
+# one-time: create the venv and install runtime deps (see Setup above)
+npm run app:build
+```
+
+The frozen server is windowed (no console), so its stdout/stderr are redirected
+to `%APPDATA%\CameraRoll\backend.log` for troubleshooting installs.
 
 ## Where to add OpenCV work
 
@@ -61,16 +95,23 @@ your photos into people. It runs two ONNX models through `onnxruntime`
 2. an **ArcFace recognizer** that turns each aligned face into a 512-d
    embedding.
 
-These model files are not pip packages. Download them once and drop the two
-`.onnx` files into the models folder, which defaults to:
+These model files are not pip packages, so on first run the app downloads them
+automatically (see `models_bootstrap.py`): when a library is first indexed and
+no models are found, it fetches InsightFace's `buffalo_l` pack in the background,
+keeps the two `.onnx` files it needs, and drops them into the models folder,
+which defaults to:
 
 ```
 <index_dir>/models/
 ```
 
 (`index_dir` is set in `config.yaml`; override the location with
-`secondary_index.faces.models_dir`.) The recommended pair is from InsightFace's
-`buffalo_l` pack:
+`secondary_index.faces.models_dir`.) The download is stdlib-only (no extra
+dependency) and reports progress through `GET /index/secondary/status` under the
+`models` field, which the setup screen shows as "Setting up face search". If it
+fails (offline, moved URL), face indexing simply parks and the rest of the app
+is unaffected. To supply the models yourself instead, drop any SCRFD detector
+and ArcFace recognizer `.onnx` pair into the folder before indexing:
 
 - detector: `det_10g.onnx` (SCRFD with landmarks)
 - recognizer: `w600k_r50.onnx` (ArcFace, 512-d)

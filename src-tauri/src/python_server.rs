@@ -39,24 +39,33 @@ impl PythonServer {
             return Ok(());
         }
 
-        let server_dir = resolve_server_dir(app);
-        let script = server_dir.join("main.py");
-        let python = resolve_python(&server_dir);
+        let launch = resolve_launch(app);
 
         eprintln!(
             "[python_server] launching: {} {} (cwd: {})",
-            python.display(),
-            script.display(),
-            server_dir.display()
+            launch.program.display(),
+            launch.args.join(" "),
+            launch.workdir.display()
         );
 
-        let child = Command::new(&python)
-            .arg(&script)
-            .current_dir(&server_dir)
+        let mut cmd = Command::new(&launch.program);
+        cmd.args(&launch.args)
+            .current_dir(&launch.workdir)
             // Pass the port through the environment so main.py and Rust never
             // disagree about where the server lives.
-            .env("PHOTOVIEWER_PORT", PORT.to_string())
-            .spawn()?;
+            .env("PHOTOVIEWER_PORT", PORT.to_string());
+
+        // In a packaged (release) build the sidecar is a windowed executable and
+        // the image workers it spawns re-launch it, so suppress any console
+        // window from flashing. Debug keeps the console for the Python logs.
+        #[cfg(all(windows, not(debug_assertions)))]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let child = cmd.spawn()?;
 
         *guard = Some(child);
         Ok(())
@@ -82,27 +91,77 @@ impl PythonServer {
     }
 }
 
-/// Figure out where the `server/` directory lives.
-///   * Debug builds run from the source tree, so we walk up from the crate dir.
-///   * Release builds read it from the bundled resource directory.
-fn resolve_server_dir(app: &AppHandle) -> PathBuf {
+/// How to launch the sidecar: the program, its arguments, and the working dir.
+struct Launch {
+    program: PathBuf,
+    args: Vec<String>,
+    workdir: PathBuf,
+}
+
+/// Decide how to start the Python sidecar.
+///   * Debug builds run `python main.py` from the source tree (preferring the
+///     project virtualenv), so the dev loop needs no freezing step.
+///   * Release builds run the self-contained executable produced by PyInstaller
+///     and bundled under the resource dir, so the user needs no Python install.
+fn resolve_launch(app: &AppHandle) -> Launch {
     if cfg!(debug_assertions) {
         // <repo>/src-tauri/.. -> <repo>/server
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let server_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("server")
+            .join("server");
+        let python = resolve_python(&server_dir);
+        let script = server_dir.join("main.py");
+        Launch {
+            program: python,
+            args: vec![script.to_string_lossy().into_owned()],
+            workdir: server_dir,
+        }
     } else {
-        // Resources are bundled relative to the resource dir; `main.py` was
-        // listed under `../server/...` in tauri.conf.json, so it lands here.
-        app.path()
-            .resource_dir()
-            .map(|r| r.join("server"))
-            .unwrap_or_else(|_| PathBuf::from("server"))
+        let exe = resolve_frozen_exe(app);
+        let workdir = exe
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        Launch {
+            program: exe,
+            args: vec![],
+            workdir,
+        }
     }
 }
 
+/// Locate the frozen sidecar executable inside the bundled resources.
+///
+/// tauri.conf.json ships the PyInstaller onedir output under `server-bin`, so
+/// the executable normally sits at `<resources>/server-bin/camera-roll-server.exe`.
+/// We also accept the nested layout some bundlers produce as a fallback.
+fn resolve_frozen_exe(app: &AppHandle) -> PathBuf {
+    let exe_name = if cfg!(target_os = "windows") {
+        "camera-roll-server.exe"
+    } else {
+        "camera-roll-server"
+    };
+    let base = app
+        .path()
+        .resource_dir()
+        .map(|r| r.join("server-bin"))
+        .unwrap_or_else(|_| PathBuf::from("server-bin"));
+
+    let direct = base.join(exe_name);
+    if direct.exists() {
+        return direct;
+    }
+    let nested = base.join("camera-roll-server").join(exe_name);
+    if nested.exists() {
+        return nested;
+    }
+    // Fall back to the expected path even if the probe failed, so the spawn
+    // error names a real location instead of silently doing nothing.
+    direct
+}
+
 /// Prefer a project virtualenv interpreter if present, otherwise fall back to
-/// whatever `python` is on PATH.
+/// whatever `python` is on PATH. Used only by the debug (source-tree) launch.
 fn resolve_python(server_dir: &PathBuf) -> PathBuf {
     #[cfg(target_os = "windows")]
     let venv = server_dir.join(".venv").join("Scripts").join("python.exe");

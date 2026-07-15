@@ -20,6 +20,7 @@ the locations index simply does not register, so face indexing is unaffected.
 
 import math
 import re
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -29,11 +30,16 @@ import imaging
 _CFG = imaging.CONFIG.get("locations", {})
 LANDMARK_THRESHOLD_M: float = float(_CFG.get("landmark_threshold_m", 750))
 
-# Where the bundled extracts live. Empty config -> server/geodata, which is what
-# tauri.conf.json ships and what resolve_server_dir points at in both dev and
-# release, so the same path works either way.
+# Where the bundled extracts live. An explicit config path wins; otherwise a
+# frozen (PyInstaller) build reads them from inside the bundle, and a normal run
+# reads them from server/geodata next to this file.
 _dir_cfg = (_CFG.get("data_dir") or "").strip()
-DATA_DIR = Path(_dir_cfg) if _dir_cfg else (Path(__file__).resolve().parent / "geodata")
+if _dir_cfg:
+    DATA_DIR = Path(_dir_cfg)
+elif getattr(sys, "frozen", False):
+    DATA_DIR = Path(getattr(sys, "_MEIPASS", ".")) / "geodata"
+else:
+    DATA_DIR = Path(__file__).resolve().parent / "geodata"
 
 CITIES_FILE = DATA_DIR / "cities.npz"
 LANDMARKS_FILE = DATA_DIR / "landmarks.npz"

@@ -17,6 +17,10 @@ server/geodata/
 **/__pycache__/
 *.pyc
 
+# PyInstaller (frozen sidecar) build output
+server/build/
+server/dist/
+
 # Generated Tauri files
 src-tauri/gen/
 
