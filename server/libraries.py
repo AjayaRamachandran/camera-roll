@@ -148,15 +148,33 @@ def find_library(reg: dict, source: str) -> Optional[dict]:
 
 
 def current_library(root: Path) -> Optional[dict]:
-    """The library entry currently selected for viewing, or None."""
+    """The library entry currently selected for viewing, or None.
+
+    If the selected library's source folder isn't reachable right now (e.g. an
+    external drive that's unplugged), we never remove or touch its registry
+    entry or index data — the drive may come back. Instead we just prefer
+    another registered library that IS currently reachable, so the app still
+    opens onto something usable rather than showing a "folder not found"
+    error. The switch is persisted (like a normal library switch) so the rest
+    of the app agrees on what's current; it only happens when the previously
+    current library has actually gone missing.
+    """
     reg = load_registry(root)
-    if reg["current"]:
-        lib = find_library(reg, reg["current"])
-        if lib:
-            return lib
-    # Fall back to the first registered library so a stale/missing `current`
-    # still opens something rather than dropping to the setup screen.
-    return reg["libraries"][0] if reg["libraries"] else None
+    lib = find_library(reg, reg["current"]) if reg["current"] else None
+    if lib is not None and Path(lib["source"]).exists():
+        return lib
+
+    for candidate in reg["libraries"]:
+        if Path(candidate["source"]).exists():
+            if _norm(candidate["source"]) != _norm(reg.get("current") or ""):
+                reg["current"] = candidate["source"]
+                save_registry(root, reg)
+            return candidate
+
+    # Nothing reachable: fall back to whatever's on record (even though its
+    # folder is missing) so a stale/missing `current` still opens something
+    # rather than dropping to the setup screen, matching prior behavior.
+    return lib or (reg["libraries"][0] if reg["libraries"] else None)
 
 
 def add_library(root: Path, source: str, make_current: bool = True) -> dict:
@@ -235,6 +253,10 @@ def list_libraries(root: Optional[Path]) -> dict:
                 "source": lib["source"],
                 "name": lib.get("name") or Path(lib["source"]).name,
                 "current": _norm(lib["source"]) == cur,
+                # Whether the source folder is reachable right now (drive
+                # plugged in, path still exists, etc). The UI disables picking
+                # a library that isn't.
+                "exists": Path(lib["source"]).exists(),
             }
             for lib in reg["libraries"]
         ],

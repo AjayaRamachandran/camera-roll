@@ -88,6 +88,8 @@ export interface Library {
   name: string;
   /** Whether this is the library currently being viewed. */
   current: boolean;
+  /** Whether the source folder is reachable right now (drive plugged in, etc). */
+  exists: boolean;
 }
 
 /** First-run face-model download progress (stdlib download, no extra deps). */

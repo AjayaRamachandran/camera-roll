@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { Check, LibraryIcon, TextAlignJustify, Plus, Trash2 } from "lucide-react";
+import { Check, LibraryIcon, TextAlignJustify, Plus, Trash2, Unplug } from "lucide-react";
 
 import Refract from "./Refract";
 import { pickFolder, restartBackend } from "@/lib/api";
@@ -81,7 +81,7 @@ export default function LibrarySwitcher() {
   };
 
   const choose = (lib: Library) => {
-    if (busy) return;
+    if (busy || !lib.exists) return;
     if (lib.current) {
       setOpen(false);
       return;
@@ -214,22 +214,33 @@ export default function LibrarySwitcher() {
               <button
                 key={lib.source}
                 type="button"
+                disabled={!lib.exists}
                 onClick={() => onRowClick(lib)}
                 onPointerDown={() => startHold(lib)}
                 onPointerUp={cancelHold}
                 onPointerLeave={cancelHold}
                 onPointerCancel={cancelHold}
                 onContextMenu={(e) => e.preventDefault()}
-                title={`${lib.source}\nPress and hold to remove`}
+                title={
+                  lib.exists
+                    ? `${lib.source}\nPress and hold to remove`
+                    : `${lib.source}\nNot found — drive may be unplugged. Press and hold to remove.`
+                }
                 className={`flex select-none items-center gap-2.5 rounded-2xl px-3 h-11 text-left text-sm transition-colors ${
-                  lib.current
-                    ? "bg-white/15 text-white"
-                    : "text-white/80 hover:bg-white/10 hover:text-white"
+                  !lib.exists
+                    ? "text-white/40 cursor-not-allowed"
+                    : lib.current
+                      ? "bg-white/15 text-white"
+                      : "text-white/80 hover:bg-white/10 hover:text-white"
                 }`}
               >
-                <LibraryIcon size={16} className="shrink-0 opacity-80" />
+                {lib.exists ? (
+                  <LibraryIcon size={16} className="shrink-0 opacity-80" />
+                ) : (
+                  <Unplug size={16} className="shrink-0 text-red-400/80" />
+                )}
                 <span className="min-w-0 flex-1 truncate">{lib.name}</span>
-                {lib.current && <Check size={16} className="shrink-0" />}
+                {lib.current && lib.exists && <Check size={16} className="shrink-0" />}
               </button>
             ))}
 

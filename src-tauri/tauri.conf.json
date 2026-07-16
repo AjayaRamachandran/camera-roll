@@ -39,7 +39,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../server/dist/camera-roll-server/**/*": "server-bin"
+      "../server/dist/camera-roll-server": "server-bin"
     },
     "windows": {
       "webviewInstallMode": {
