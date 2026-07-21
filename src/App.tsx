@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 
 import { AcrylicMatteProvider } from "./components/AcrylicMatte";
 import { CameraReflectionProvider } from "./components/CameraReflection";
+import { LiquidGlassProvider } from "./components/LiquidGlassConfig";
 import FrostedBackground from "./components/FrostedBackground";
+import SettingsButton from "./components/SettingsButton";
 import TitleBar from "./components/TitleBar";
 import LoadingLibrary from "./components/LoadingLibrary";
 import LibrarySetup from "./components/LibrarySetup";
@@ -239,6 +241,7 @@ export default function App() {
   const ready = index !== null;
 
   return (
+    <LiquidGlassProvider>
     <AcrylicMatteProvider>
       <CameraReflectionProvider>
       <FrostedBackground />
@@ -304,6 +307,8 @@ export default function App() {
             />
 
             <LibrarySwitcher />
+
+            <SettingsButton />
           </div>
         )}
       </main>
@@ -341,5 +346,6 @@ export default function App() {
       )}
       </CameraReflectionProvider>
     </AcrylicMatteProvider>
+    </LiquidGlassProvider>
   );
 }
