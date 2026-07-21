@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { useAcrylicMatte } from "./AcrylicMatte";
+import { useLiquidGlass } from "./LiquidGlassConfig";
 
 /**
  * Refract: a wrapper that gives any element the liquid-glass material.
@@ -44,9 +45,15 @@ import { useAcrylicMatte } from "./AcrylicMatte";
 export interface RefractProps extends HTMLAttributes<HTMLElement> {
   /** Element to render as the glass surface. Defaults to a <div>. */
   as?: ElementType;
-  /** Base backdrop blur in px. Scaled up for larger boxes. Default 3. */
+  /**
+   * Base backdrop blur in px (scaled up for larger boxes). Omit to follow the
+   * app's live glass appearance (see LiquidGlassConfig).
+   */
   blur?: number;
-  /** Background tint opacity, 0..1. Default 0.1. */
+  /**
+   * Background tint opacity, 0..1. Omit to follow the app's live glass
+   * appearance (see LiquidGlassConfig).
+   */
   tint?: number;
   /** Optical strength of the edge refraction. Default 0.08. */
   refraction?: number;
@@ -63,9 +70,7 @@ export interface RefractProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
 }
 
-const DEFAULT_BLUR = 3;
-const DEFAULT_TINT = 0.3;
-const DEFAULT_REFRACTION = 0.1;
+const DEFAULT_REFRACTION = 0.08;
 
 /** Reference box length the blur is calibrated against (the prototype orb). */
 const BLUR_REF = 64;
@@ -101,12 +106,16 @@ function buildMap(W: number, H: number, b: number, a: number) {
   const img = ctx.createImageData(mw, mh);
   const data = img.data;
 
+  const q = 3
   const g = (n: number) => {
     const t = a * (b - n);
-    return Math.exp(t) - (t + 1);
+    // Sample-point falloff: the exponential squared (exp(t)^2 = exp(2t)),
+    // minus its first-order Taylor term so g(0)=0 and g'(0)=0 (smooth start
+    // at the interior boundary — no kink where the glass meets the flat centre).
+    return Math.exp(q * t) - (q * t + 1);
   };
   const MAGIC = 400;
-  const gRef = Math.exp(a * b) - (a * b + 1) || 1e-6;
+  const gRef = Math.exp(q * a * b) - (q * a * b + 1) || 1e-6;
   const coeff = (MAGIC * a) / gRef;
 
   const dxA = new Float32Array(mw * mh);
@@ -181,8 +190,8 @@ function buildMap(W: number, H: number, b: number, a: number) {
 
 export default function Refract({
   as,
-  blur = DEFAULT_BLUR,
-  tint = DEFAULT_TINT,
+  blur: blurProp,
+  tint: tintProp,
   refraction = DEFAULT_REFRACTION,
   className,
   style,
@@ -191,6 +200,14 @@ export default function Refract({
   ...rest
 }: RefractProps) {
   const Tag = (as ?? "div") as ElementType;
+
+  // Fall back to the app's live glass appearance when a surface doesn't pin its
+  // own blur / tint, so the settings control restyles every pane at once. A
+  // surface that passes explicit values (e.g. a bespoke tinted button) keeps
+  // them regardless of the global setting.
+  const glass = useLiquidGlass();
+  const blur = blurProp ?? glass.blur;
+  const tint = tintProp ?? glass.tint;
 
   // Latest generated displacement map, mirrored into state only when debugMap
   // is on so the preview <img> below re-renders live with each regen.
