@@ -186,10 +186,10 @@ export default function LibrarySwitcher() {
             className="absolute inset-0 grid place-items-center text-white/85 hover:text-white"
             style={{
               opacity: open ? 0 : 1,
-              filter: open ? "blur(6px)" : "blur(0px)",
+              filter: open ? "blur(var(--refract-fade-blur))" : "blur(0px)",
               pointerEvents: open ? "none" : "auto",
               transition:
-                "opacity calc(var(--refract-anim) * 0.6) ease, filter calc(var(--refract-anim) * 0.6) ease",
+                "opacity var(--refract-fade-anim) var(--refract-fade-ease), filter var(--refract-fade-anim) var(--refract-fade-ease)",
             }}
           >
             <TextAlignJustify size={18} />
@@ -201,12 +201,12 @@ export default function LibrarySwitcher() {
             style={{
               opacity: open ? 1 : 0,
               transform: open ? "none" : "translateY(6px)",
-              filter: open ? "blur(0px)" : "blur(6px)",
+              filter: open ? "blur(0px)" : "blur(var(--refract-fade-blur))",
               pointerEvents: open ? "auto" : "none",
               transition: [
-                "opacity calc(var(--refract-anim) * 0.6) ease",
-                "transform calc(var(--refract-anim) * 0.6) var(--refract-spring-pos)",
-                "filter calc(var(--refract-anim) * 0.6) ease",
+                "opacity var(--refract-fade-anim) var(--refract-fade-ease)",
+                "transform var(--refract-fade-anim) var(--refract-spring-pos)",
+                "filter var(--refract-fade-anim) var(--refract-fade-ease)",
               ].join(", "),
             }}
           >

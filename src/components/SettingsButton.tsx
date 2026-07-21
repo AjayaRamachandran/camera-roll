@@ -77,31 +77,49 @@ export default function SettingsButton() {
             className="absolute inset-0 grid place-items-center text-white/85 hover:text-white"
             style={{
               opacity: open ? 0 : 1,
-              filter: open ? "blur(6px)" : "blur(0px)",
+              filter: open ? "blur(var(--refract-fade-blur))" : "blur(0px)",
               pointerEvents: open ? "none" : "auto",
               transition:
-                "opacity calc(var(--refract-anim) * 0.6) ease, filter calc(var(--refract-anim) * 0.6) ease",
+                "opacity var(--refract-fade-anim) var(--refract-fade-ease), filter var(--refract-fade-anim) var(--refract-fade-ease)",
             }}
           >
             <Settings size={18} />
           </button>
 
-          {/* Open face: the appearance stepper. */}
+          {/* Open face. The content lives in a FIXED-size box CENTERED in a clip
+              layer that tracks the morphing container, so its centroid rides the
+              box centre exactly like the other glass controls: as the box springs
+              open the content is revealed symmetrically from the middle (not
+              wiped in from a corner), and because the box is a fixed size its
+              layout is computed once at the panel size and never reflows while
+              the container animates. The clip layer carries no backdrop-filter,
+              so overflow:hidden is safe here (unlike on the glass surface), and
+              it stays inside the box so the shadow spill is untouched. */}
           <div
-            className="absolute inset-0 flex flex-col justify-center gap-3 overflow-hidden rounded-[22px] px-4 py-4"
+            className="absolute inset-0 overflow-hidden"
             style={{
-              opacity: open ? 1 : 0,
-              transform: open ? "none" : "translateY(6px)",
-              filter: open ? "blur(0px)" : "blur(6px)",
+              borderRadius: "inherit",
               pointerEvents: open ? "auto" : "none",
+            }}
+          >
+          <div
+            className="absolute left-1/2 top-1/2 flex flex-col justify-center gap-3 px-4 py-4"
+            style={{
+              width: PANEL_W,
+              height: PANEL_H,
+              opacity: open ? 1 : 0,
+              transform: open
+                ? "translate(-50%, -50%)"
+                : "translate(-50%, calc(-50% + 6px))",
+              filter: open ? "blur(0px)" : "blur(var(--refract-fade-blur))",
               transition: [
-                "opacity calc(var(--refract-anim) * 0.6) ease",
-                "transform calc(var(--refract-anim) * 0.6) var(--refract-spring-pos)",
-                "filter calc(var(--refract-anim) * 0.6) ease",
+                "opacity var(--refract-fade-anim) var(--refract-fade-ease)",
+                "transform var(--refract-fade-anim) var(--refract-spring-pos)",
+                "filter var(--refract-fade-anim) var(--refract-fade-ease)",
               ].join(", "),
             }}
           >
-            <span className="text-sm text-white/60">Glass</span>
+            <span className="text-sm text-white/60">Liquid Glass</span>
 
             <div className="flex items-center justify-between">
               <button
@@ -147,7 +165,7 @@ export default function SettingsButton() {
             </div>
 
             {/* Divider between the glass appearance controls and reflections. */}
-            <div className="h-px w-full bg-white/10" />
+            <div className="h-px w-full bg-white/10 my-2 mt-3" />
 
             {/* Reflections toggle. Sits below the frost controls; when on, the
                 reflection strength follows the glass blur set above. */}
@@ -175,11 +193,12 @@ export default function SettingsButton() {
               >
                 <span
                   className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                    reflections ? "translate-x-4" : "translate-x-0.5"
+                    reflections ? "translate-x-0" : "-translate-x-3.75"
                   }`}
                 />
               </button>
             </div>
+          </div>
           </div>
         </Refract>
       </div>

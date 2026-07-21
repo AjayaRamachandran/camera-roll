@@ -35,6 +35,20 @@
   /* Master animation duration. Lower = snappier; sub-durations scale off it.
      Read back in JS (Refract.tsx) so the timing stays in one place. */
   --refract-anim: 0.33s;
+
+  /* Content crossfade between a glass control's states (e.g. an icon face
+     dissolving into an expanded panel). The on-glass content blurs out and
+     fades as the other face blurs in. Deliberately slower and deeper than the
+     geometry morph so the swap reads as a soft dissolve rather than a snap.
+     Shared by every glass control (SettingsButton, LibrarySwitcher, the
+     popovers) so the feel stays consistent; tune it here, once.
+       --refract-fade-anim: how long the crossfade takes (slower = dreamier).
+       --refract-fade-blur: how far the outgoing/incoming face blurs.
+       --refract-fade-ease: a tight ease-in-out so the swap eases in and out
+         hard, with a fast middle. */
+  --refract-fade-anim: 0.35s;
+  --refract-fade-blur: 16px;
+  --refract-fade-ease: cubic-bezier(0.7, 0, 0.3, 1);
 }
 
 /* Position lives in the components layer so a consumer's Tailwind `absolute` /

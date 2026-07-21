@@ -342,10 +342,10 @@ export default function InfoPopover({
               className="absolute inset-0 grid place-items-center text-white"
               style={{
                 opacity: assignOpen ? 0 : 1,
-                filter: assignOpen ? "blur(6px)" : "blur(0px)",
+                filter: assignOpen ? "blur(var(--refract-fade-blur))" : "blur(0px)",
                 pointerEvents: "none",
                 transition:
-                  "opacity calc(var(--refract-anim) * 0.6) ease, filter calc(var(--refract-anim) * 0.6) ease",
+                  "opacity var(--refract-fade-anim) var(--refract-fade-ease), filter var(--refract-fade-anim) var(--refract-fade-ease)",
               }}
             >
               <HelpCircle size={13} />
@@ -357,12 +357,12 @@ export default function InfoPopover({
               style={{
                 opacity: assignOpen ? 1 : 0,
                 transform: assignOpen ? "none" : "translateY(6px)",
-                filter: assignOpen ? "blur(0px)" : "blur(6px)",
+                filter: assignOpen ? "blur(0px)" : "blur(var(--refract-fade-blur))",
                 pointerEvents: assignOpen ? "auto" : "none",
                 transition: [
-                  "opacity calc(var(--refract-anim) * 0.6) ease",
-                  "transform calc(var(--refract-anim) * 0.6) var(--refract-spring-pos)",
-                  "filter calc(var(--refract-anim) * 0.6) ease",
+                  "opacity var(--refract-fade-anim) var(--refract-fade-ease)",
+                  "transform var(--refract-fade-anim) var(--refract-spring-pos)",
+                  "filter var(--refract-fade-anim) var(--refract-fade-ease)",
                 ].join(", "),
               }}
             >
