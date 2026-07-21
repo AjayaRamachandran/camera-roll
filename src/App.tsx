@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { AcrylicMatteProvider } from "./components/AcrylicMatte";
+import { CameraReflectionProvider } from "./components/CameraReflection";
 import FrostedBackground from "./components/FrostedBackground";
 import TitleBar from "./components/TitleBar";
 import LoadingLibrary from "./components/LoadingLibrary";
@@ -239,6 +240,7 @@ export default function App() {
 
   return (
     <AcrylicMatteProvider>
+      <CameraReflectionProvider>
       <FrostedBackground />
       <TitleBar />
 
@@ -337,6 +339,7 @@ export default function App() {
           }}
         />
       )}
+      </CameraReflectionProvider>
     </AcrylicMatteProvider>
   );
 }
