@@ -37,12 +37,20 @@ interface GlassConfig {
   /** Index of the active preset in GLASS_PRESETS. */
   presetIndex: number;
   setPresetIndex: (index: number) => void;
+  /**
+   * Whether the camera-driven reflections are on. Off by default (experimental,
+   * and it needs the front camera). When on, the reflection compositor draws and
+   * its softness follows the live glass blur above.
+   */
+  reflections: boolean;
+  setReflections: (on: boolean) => void;
 }
 
 const LiquidGlassContext = createContext<GlassConfig | null>(null);
 
 export function LiquidGlassProvider({ children }: { children: ReactNode }) {
   const [presetIndex, setPresetIndex] = useState(DEFAULT_PRESET_INDEX);
+  const [reflections, setReflections] = useState(false);
 
   const value = useMemo<GlassConfig>(() => {
     const preset = GLASS_PRESETS[presetIndex] ?? GLASS_PRESETS[DEFAULT_PRESET_INDEX];
@@ -51,8 +59,10 @@ export function LiquidGlassProvider({ children }: { children: ReactNode }) {
       tint: preset.tint,
       presetIndex,
       setPresetIndex,
+      reflections,
+      setReflections,
     };
-  }, [presetIndex]);
+  }, [presetIndex, reflections]);
 
   return (
     <LiquidGlassContext.Provider value={value}>
@@ -74,5 +84,7 @@ export function useLiquidGlass(): GlassConfig {
     tint: preset.tint,
     presetIndex: DEFAULT_PRESET_INDEX,
     setPresetIndex: () => {},
+    reflections: false,
+    setReflections: () => {},
   };
 }

@@ -7,7 +7,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { DEFAULT_BLUR } from "./Refract";
+import { useLiquidGlass } from "./LiquidGlassConfig";
 // Shader source lives in its own .vert/.frag files so editors give it GLSL
 // syntax highlighting. Vite's `?raw` suffix imports each as a plain string.
 import VERT from "./shaders/reflect.vert?raw";
@@ -88,10 +88,13 @@ const CAM_SIZE = Math.max(
   Math.round(CAM_BASE_SIZE / DOWNSAMPLE_MULTIPLE)
 );
 
-/** Blur applied to the shrunk camera frame, in that frame's pixels. The upscale
- *  back to screen magnifies it by the downsample factor, so the perceived blur
- *  is BLUR_MULTIPLE * DOWNSAMPLE_MULTIPLE * glass blur. */
-const CAM_BLUR = DEFAULT_BLUR * BLUR_MULTIPLE;
+/** Blur applied to the shrunk camera frame, from the live glass blur (see
+ *  LiquidGlassConfig): more frost means softer reflections, in lockstep with the
+ *  surface's own blur. It is read per frame off a ref, so stepping the appearance
+ *  restyles the reflection immediately. Expressed in the shrunk frame's pixels;
+ *  the upscale back to screen magnifies it by the downsample factor, so the
+ *  perceived blur is BLUR_MULTIPLE * DOWNSAMPLE_MULTIPLE * glass blur. */
+const camBlurFor = (glassBlur: number) => glassBlur * BLUR_MULTIPLE;
 
 /** Black point (0..255). The camera is level-stretched so anything below this
  *  crushes to black and the range above is rescaled back up to full, isolating
@@ -211,6 +214,21 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
   // Textures whose entry was removed; deleted on the next frame on the GL thread.
   const deadTex = useRef<WebGLTexture[]>([]);
 
+  // Live glass appearance. `reflections` gates the whole effect (and the camera);
+  // `blur` drives how soft the reflection is, so it tracks the frost setting.
+  // Both are read off refs inside the rAF loop so changes apply without tearing
+  // down the GL context.
+  const glass = useLiquidGlass();
+  const enabledRef = useRef(glass.reflections);
+  enabledRef.current = glass.reflections;
+  const camBlurRef = useRef(camBlurFor(glass.blur));
+  camBlurRef.current = camBlurFor(glass.blur);
+  // The camera-acquisition effect (keyed on `reflections`) reaches the <video>
+  // and stream created by the GL effect through these refs.
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const camReadyRef = useRef(false);
+
   const register = useCallback((id: string, el: HTMLElement) => {
     const existing = entries.current.get(id);
     if (existing) existing.el = el;
@@ -327,11 +345,11 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
     video.autoplay = true;
     video.muted = true;
     video.playsInline = true;
+    // Expose the <video> so the separate camera-acquisition effect can attach a
+    // stream to it when reflections are turned on.
+    videoElRef.current = video;
 
-    let stream: MediaStream | null = null;
     let rafId: number | undefined;
-    let cancelled = false;
-    let camReady = false;
 
     // ---- Shadow pass: its own offscreen GL canvas so it never disturbs the
     // reflection canvas. Rendered at a fixed max size; each element uses a
@@ -481,9 +499,12 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
       const sy = (vh - side) / 2;
       camCtx.clearRect(0, 0, CAM_SIZE, CAM_SIZE);
 
+      // Softness follows the live glass blur, read fresh each frame.
+      const camBlur = camBlurRef.current;
+
       // Primary reflection: the mirrored, blurred feed.
       camCtx.save();
-      camCtx.filter = `blur(${CAM_BLUR}px)`;
+      camCtx.filter = `blur(${camBlur}px)`;
       camCtx.translate(CAM_SIZE, 0); // mirror horizontally
       camCtx.scale(-1, 1);
       camCtx.drawImage(video, sx, sy, side, side, 0, 0, CAM_SIZE, CAM_SIZE);
@@ -496,7 +517,7 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
         camCtx.save();
         camCtx.globalCompositeOperation = "screen";
         camCtx.globalAlpha = SECOND_REFLECTION_OPACITY;
-        camCtx.filter = `blur(${CAM_BLUR}px)`;
+        camCtx.filter = `blur(${camBlur}px)`;
         camCtx.translate(0, CAM_SIZE); // flip vertically
         camCtx.scale(1, -1);
         camCtx.drawImage(video, sx, sy, side, side, 0, 0, CAM_SIZE, CAM_SIZE);
@@ -527,13 +548,18 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
-      if (!camReady) camReady = drawCamera();
+      // Reflections off: leave the canvas cleared (nothing drawn) and skip the
+      // camera work entirely. The camera stream itself is released by the
+      // acquisition effect below, so the webcam is not held open while off.
+      if (!enabledRef.current) return;
+
+      if (!camReadyRef.current) camReadyRef.current = drawCamera();
       else drawCamera();
 
       // Shadows run on their own throttle and their own offscreen context.
       renderShadows(now);
 
-      if (!camReady || entries.current.size === 0) return;
+      if (!camReadyRef.current || entries.current.size === 0) return;
 
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, camTex);
@@ -571,14 +597,49 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
       }
     };
 
+    rafId = requestAnimationFrame(frame);
+
+    return () => {
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
+      videoElRef.current = null;
+      glRef.current = null;
+      canvas.remove();
+      sgl?.getExtension("WEBGL_lose_context")?.loseContext();
+    };
+  }, []);
+
+  // Acquire the camera only while reflections are on, and release it the moment
+  // they are turned off, so the webcam is never held open otherwise. Best-effort:
+  // if the camera is unavailable or access is declined, the compositor simply
+  // never draws and the glass looks as it did before.
+  useEffect(() => {
+    const video = videoElRef.current;
+    if (!video) return;
+
+    if (!glass.reflections) {
+      // Turn everything off: drop the stream, reset the camera-ready latch, and
+      // wipe any frozen light-shadows so nothing lingers over the glass.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      video.srcObject = null;
+      camReadyRef.current = false;
+      for (const e of entries.current.values()) {
+        if (e.shadowCtx && e.shadowCanvas) {
+          e.shadowCtx.clearRect(0, 0, e.shadowCanvas.width, e.shadowCanvas.height);
+        }
+      }
+      return;
+    }
+
+    let cancelled = false;
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
-          stream = null;
           return;
         }
+        streamRef.current = stream;
         video.srcObject = stream;
         await video.play().catch(() => {});
       } catch {
@@ -586,18 +647,14 @@ export function CameraReflectionProvider({ children }: { children: ReactNode }) 
       }
     })();
 
-    rafId = requestAnimationFrame(frame);
-
     return () => {
       cancelled = true;
-      if (rafId !== undefined) cancelAnimationFrame(rafId);
-      if (stream) stream.getTracks().forEach((t) => t.stop());
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
       video.srcObject = null;
-      glRef.current = null;
-      canvas.remove();
-      sgl?.getExtension("WEBGL_lose_context")?.loseContext();
+      camReadyRef.current = false;
     };
-  }, []);
+  }, [glass.reflections]);
 
   const api = useMemo<ReflectionApi>(
     () => ({ register, setMap, setShadowCanvas, unregister }),

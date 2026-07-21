@@ -10,8 +10,8 @@ import { GLASS_PRESETS, useLiquidGlass } from "./LiquidGlassConfig";
 // Positioned by CENTRE (translate(-50%,-50%)) so the morph rides Refract's
 // liquid-glass spring, exactly like LibrarySwitcher (which grows up-right).
 const CLOSED = 40;
-const PANEL_W = 236;
-const PANEL_H = 102;
+const PANEL_W = 256;
+const PANEL_H = 208;
 
 /**
  * Bottom-right settings control: a glass orb that springs open into a small
@@ -21,7 +21,8 @@ const PANEL_H = 102;
  */
 export default function SettingsButton() {
   const [open, setOpen] = useState(false);
-  const { presetIndex, setPresetIndex } = useLiquidGlass();
+  const { presetIndex, setPresetIndex, reflections, setReflections } =
+    useLiquidGlass();
 
   useEffect(() => {
     if (!open) return;
@@ -143,6 +144,41 @@ export default function SettingsButton() {
                   }`}
                 />
               ))}
+            </div>
+
+            {/* Divider between the glass appearance controls and reflections. */}
+            <div className="h-px w-full bg-white/10" />
+
+            {/* Reflections toggle. Sits below the frost controls; when on, the
+                reflection strength follows the glass blur set above. */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm text-white/90">
+                  Reflections{" "}
+                  <span className="text-white/40">(Experimental)</span>
+                </div>
+                <div className="mt-0.5 text-xs leading-snug text-white/45">
+                  Uses the front camera to mimic reflections on top of the
+                  existing refractions
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={reflections}
+                aria-label="Reflections"
+                onClick={() => setReflections(!reflections)}
+                className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${
+                  reflections ? "bg-white/80" : "bg-white/20"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    reflections ? "translate-x-4" : "translate-x-0.5"
+                  }`}
+                />
+              </button>
             </div>
           </div>
         </Refract>

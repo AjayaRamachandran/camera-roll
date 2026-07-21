@@ -71,10 +71,6 @@ export interface RefractProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
 }
 
-/** Base blur the reflection compositor calibrates its own softening against.
- *  Surfaces themselves follow the live glass appearance (see LiquidGlassConfig);
- *  this is only the reflection's reference point. */
-export const DEFAULT_BLUR = 1;
 const DEFAULT_REFRACTION = 0.08;
 
 /** Reference box length the blur is calibrated against (the prototype orb). */
