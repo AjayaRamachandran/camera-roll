@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { AcrylicMatteProvider } from "./components/AcrylicMatte";
+import { CameraReflectionProvider } from "./components/CameraReflection";
 import { LiquidGlassProvider } from "./components/LiquidGlassConfig";
 import FrostedBackground from "./components/FrostedBackground";
 import SettingsButton from "./components/SettingsButton";
@@ -242,6 +243,7 @@ export default function App() {
   return (
     <LiquidGlassProvider>
     <AcrylicMatteProvider>
+      <CameraReflectionProvider>
       <FrostedBackground />
       <TitleBar />
 
@@ -342,6 +344,7 @@ export default function App() {
           }}
         />
       )}
+      </CameraReflectionProvider>
     </AcrylicMatteProvider>
     </LiquidGlassProvider>
   );

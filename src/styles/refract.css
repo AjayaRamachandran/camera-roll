@@ -54,21 +54,10 @@
   --ny: 0px; /* hover nudge toward the cursor, y */
   --sc: 1; /* hover scale */
 
-  background: rgba(60, 62, 66, var(--sa));
-  /* A real inset box-shadow (unlike .refract-tint above, this one actually
-     uses the `inset` keyword) — a white glow hugging the inside of the
-     border. Safe to put directly on `.refract` since, unlike overflow, a
-     box-shadow doesn't touch the backdrop-filter/WebView2 constraint above. */
-  box-shadow: inset 0 5px 12px -4px rgba(255, 255, 255, 0.3),
-              inset 0 1px 3px 2px rgba(255, 255, 255, 0.1);
-  border-top: 1px solid rgba(255, 255, 255, 1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
-  /* The drop shadow is a separate painted layer (.refract-shadow below), NOT a
-     box-shadow or filter: drop-shadow here. Over the app's transparent acrylic
-     window, shadow primitives blend toward transparency and never render; only a
-     real filled element composites over the OS acrylic (the same reason the tint
-     is visible). So the shadow is a blurred, filled rounded rect behind the
-     glass. */
+  /* The wrapper is transparent: it only carries layout, position, the hover
+     transform, and the state-morph transitions. The glass itself (background,
+     rim, borders, backdrop-filter) lives on .refract-surface below, so the
+     shadow layers can sit BEHIND the surface and be refracted by it. */
 
   /* Hover lean + pop. Uses translate/scale within `transform`; consumers must
      not also set a `transform` utility on the same element (center with
@@ -97,6 +86,29 @@
     color 0.14s ease;
 }
 
+/* The glass surface: the element that actually carries the backdrop-filter
+   (refraction + blur, applied inline per instance) and the glass's own look.
+   Absolutely positioned over the wrapper box and sitting at z-index:-1 — behind
+   the wrapper's children but IN FRONT of the shadow layers (z-index:-2), so the
+   shadows fall inside this surface's backdrop and are refracted + tinted by it.
+   No overflow:hidden (WebView2 would drop the backdrop-filter); rounded corners
+   still clip via border-radius. */
+.refract-surface {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: rgba(60, 62, 66, var(--sa));
+  /* A real inset box-shadow — a white glow hugging the inside of the border.
+     Safe here since, unlike overflow, a box-shadow doesn't touch the
+     backdrop-filter/WebView2 constraint. */
+  box-shadow: inset 0 5px 12px -4px rgba(255, 255, 255, 0.3),
+              inset 0 1px 3px 2px rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
 /* The drop shadow: a very subtle, very blurry, filled rounded rect sitting
    behind the glass. Filled (not a box-shadow / filter: drop-shadow) so it
    actually composites over the transparent OS acrylic. inset:0 + border-radius:
@@ -107,12 +119,35 @@
 .refract-shadow {
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: -2;
   border-radius: inherit;
   background: rgba(0, 0, 0, 0.3);
   filter: blur(16px);
   transform: translateY(6px);
   pointer-events: none;
+}
+
+/* Light-driven shadow, painted from the webcam by CameraReflection.tsx and
+   layered over the static .refract-shadow. It has to spill beyond the glass box
+   so the shadow's throw isn't clipped, hence the negative inset (kept in step
+   with SHADOW_SPREAD in CameraReflection.tsx). The canvas bitmap is rendered
+   small and stretched here — the shadow is soft, so the upscale is free blur.
+   z-index:-2 keeps it behind the glass; empty until the camera is available. */
+.refract-lightshadow {
+  position: absolute;
+  /* Canvas is a replaced element, so it won't stretch to an inset box on its
+     own; size it explicitly. z-index:-2 keeps it BEHIND .refract-surface (-1) so
+     the glass refracts and tints it. */
+  z-index: -2;
+  pointer-events: none;
+  /* Sized to the box plus the full spill (2 * SHADOW_SPREAD), offset up/left by
+     the spill so it stays centered. A conventional blur on top of the
+     convolution so it reads soft rather than a crisp smear. */
+  top: -48px;
+  left: -48px;
+  width: calc(100% + 96px);
+  height: calc(100% + 96px);
+  filter: blur(12px); /* LIGHT_SOURCE_SIZE */
 }
 
 /* An interior tint, painted above the glass's own background but BEHIND any

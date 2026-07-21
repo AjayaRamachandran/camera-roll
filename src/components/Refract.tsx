@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { useAcrylicMatte } from "./AcrylicMatte";
+import { useCameraReflection } from "./CameraReflection";
 import { useLiquidGlass } from "./LiquidGlassConfig";
 
 /**
@@ -102,7 +103,7 @@ function buildMap(W: number, H: number, b: number, a: number) {
   cv.width = mw;
   cv.height = mh;
   const ctx = cv.getContext("2d");
-  if (!ctx) return { uri: "", scale: 0 };
+  if (!ctx) return { uri: "", scale: 0, mapCanvas: null, radius: 0 };
   const img = ctx.createImageData(mw, mh);
   const data = img.data;
 
@@ -185,7 +186,11 @@ function buildMap(W: number, H: number, b: number, a: number) {
     data[k * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
-  return { uri: cv.toDataURL(), scale };
+  // `mapCanvas` (the raw R/G direction field) is handed to the reflection
+  // compositor, which uploads it as a GL texture and reads the direction to do
+  // an environment-map lookup into the camera feed. `b` is the painted-clamped
+  // corner radius, used there to mask the reflection to the rounded silhouette.
+  return { uri: cv.toDataURL(), scale, mapCanvas: cv, radius: b };
 }
 
 export default function Refract({
@@ -222,9 +227,17 @@ export default function Refract({
   // AcrylicMatte.tsx / docs/liquid-glass-acrylic.md.
   const matte = useAcrylicMatte();
 
+  // Reflections: this surface registers its footprint and hands its displacement
+  // map to the WebGL compositor, which environment-maps the live camera feed
+  // through the rim and screen-blends it over the glass. See CameraReflection.tsx.
+  const reflection = useCameraReflection();
+
   const elRef = useRef<HTMLElement>(null);
   const feImageRef = useRef<SVGFEImageElement>(null);
   const dispRef = useRef<SVGFEDisplacementMapElement>(null);
+  // Canvas the reflection compositor paints this surface's light-driven shadow
+  // into. Sits behind the glass as an augment to the static ambient shadow.
+  const shadowRef = useRef<HTMLCanvasElement>(null);
 
   // Latest prop values, so the resize/hover loops always read current settings
   // without re-subscribing the observers.
@@ -251,7 +264,7 @@ export default function Refract({
       const W = Math.max(2, Math.round(r.width));
       const H = Math.max(2, Math.round(r.height));
       const b = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0.001;
-      const { uri, scale } = buildMap(W, H, b, refractionRef.current);
+      const { uri, scale, mapCanvas, radius } = buildMap(W, H, b, refractionRef.current);
       const feImage = feImageRef.current;
       const disp = dispRef.current;
       if (feImage && uri) {
@@ -261,6 +274,9 @@ export default function Refract({
         feImage.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", uri);
       }
       if (disp) disp.setAttribute("scale", scale.toFixed(2));
+      // Hand the fresh direction field to the reflection compositor so its
+      // environment-map lookup tracks the current box and rounded corners.
+      if (mapCanvas) reflection.setMap(filterId, mapCanvas, radius);
       if (debugMap && uri) setDebugUri(uri);
       applyBlur(W, H);
     };
@@ -291,9 +307,15 @@ export default function Refract({
     // (position included), and drop it on unmount.
     matte.register(filterId, el);
 
+    // Register this surface with the reflection compositor so it draws a
+    // reflection quad over this box each frame; drop it on unmount.
+    reflection.register(filterId, el);
+    reflection.setShadowCanvas(filterId, shadowRef.current);
+
     return () => {
       ro.disconnect();
       matte.unregister(filterId);
+      reflection.unregister(filterId);
     };
   }, []);
 
@@ -305,7 +327,7 @@ export default function Refract({
     const W = Math.max(2, Math.round(r.width));
     const H = Math.max(2, Math.round(r.height));
     const b = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0.001;
-    const { uri, scale } = buildMap(W, H, b, refraction);
+    const { uri, scale, mapCanvas, radius } = buildMap(W, H, b, refraction);
     const feImage = feImageRef.current;
     const disp = dispRef.current;
     if (feImage && uri) {
@@ -315,6 +337,7 @@ export default function Refract({
       feImage.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", uri);
     }
     if (disp) disp.setAttribute("scale", scale.toFixed(2));
+    if (mapCanvas) reflection.setMap(filterId, mapCanvas, radius);
     if (debugMap && uri) setDebugUri(uri);
     el.style.setProperty("--blur", (blur * Math.sqrt((W + H) / 2 / BLUR_REF)).toFixed(2) + "px");
   }, [blur, refraction, debugMap]);
@@ -367,63 +390,79 @@ export default function Refract({
 
   const filterValue = `blur(var(--blur)) saturate(2) brightness(calc(var(--refract-gb) * 1.2)) url(#${filterId})`;
 
-  const mergedStyle: CSSProperties = {
+  // The wrapper carries layout, position, and the consumer's className/style; the
+  // backdrop-filter lives on an inner surface so the shadow layers can sit BEHIND
+  // that surface (in its backdrop) and get refracted + tinted by the glass.
+  const wrapperStyle: CSSProperties = {
     ["--sa" as string]: tint,
+    ...style,
+  };
+  const surfaceStyle: CSSProperties = {
     backdropFilter: filterValue,
     WebkitBackdropFilter: filterValue,
-    ...style,
   };
 
   return (
     <Tag
       ref={elRef}
       className={className ? `refract ${className}` : "refract"}
-      style={mergedStyle}
+      style={wrapperStyle}
       {...rest}
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
     >
-      {/* Drop shadow: a blurred, filled layer behind the glass. It has to be a
-          real painted element (not a box-shadow / filter: drop-shadow) because
-          shadow primitives don't composite over the app's transparent acrylic
-          window. inset:0 + border-radius:inherit makes it track the box and
-          morph with it for free. See .refract-shadow in refract.css. */}
+      {/* Shadows sit BEHIND the glass surface (below), so the surface's
+          backdrop-filter refracts and tints them the way real glass would. They
+          spill past the box (negative inset) so the throw and drop aren't
+          clipped. All are painted, not box-shadow / filter: drop-shadow, because
+          shadow primitives don't composite over the app's transparent acrylic. */}
+
+      {/* Static ambient drop shadow: a subtle blurred fill that grounds the glass
+          even when the camera is off. See .refract-shadow in refract.css. */}
       <span className="refract-shadow" aria-hidden="true" />
 
-      {/* Interior tint: blurred and retreated from the edges so it's opaque in
-          the middle and fades out before the border. Wrapped in
-          .refract-tint-clip so the blur bleed is clipped to the glass
-          silhouette. See refract.css. */}
-      <span className="refract-tint-clip" aria-hidden="true">
-        <span className="refract-tint" aria-hidden="true" />
+      {/* Light-driven shadow: the reflection compositor paints a room-lit,
+          direction-aware shadow here. Empty until the camera is available. */}
+      <canvas className="refract-lightshadow" aria-hidden="true" ref={shadowRef} />
+
+      {/* The glass surface: it carries the backdrop-filter (refraction + blur)
+          and the glass decorations. Absolutely positioned over the wrapper box
+          and behind the children, so its backdrop is the shadows + page. */}
+      <span className="refract-surface" aria-hidden="true" style={surfaceStyle}>
+        {/* Interior tint: blurred and retreated from the edges so it's opaque in
+            the middle and fades out before the border. Wrapped in
+            .refract-tint-clip so the blur bleed is clipped to the glass
+            silhouette. See refract.css. */}
+        <span className="refract-tint-clip">
+          <span className="refract-tint" />
+        </span>
+
+        {/* Black left/right border complementing the white top/bottom rim. */}
+        <span className="refract-rim" />
+
+        {/* Per-instance displacement filter. The unique id is what keeps multiple
+            glass surfaces from sharing (and corrupting) one another's map. */}
+        <svg className="refract-filter">
+          <filter
+            id={filterId}
+            x="-30%"
+            y="-30%"
+            width="160%"
+            height="160%"
+            colorInterpolationFilters="sRGB"
+          >
+            <feImage ref={feImageRef} x="0" y="0" width="64" height="64" preserveAspectRatio="none" result="map" />
+            <feDisplacementMap
+              ref={dispRef}
+              in="SourceGraphic"
+              in2="map"
+              scale="64"
+              xChannelSelector="R"
+              yChannelSelector="G"
+            />
+          </filter>
+        </svg>
       </span>
-
-      {/* Black left/right border complementing the white top/bottom rim on
-          `.refract`. See .refract-rim in refract.css. */}
-      <span className="refract-rim" aria-hidden="true" />
-
-      {/* Per-instance displacement filter. The unique id is what keeps multiple
-          glass surfaces from sharing (and corrupting) one another's map. */}
-      <svg className="refract-filter" aria-hidden="true">
-        <filter
-          id={filterId}
-          x="-30%"
-          y="-30%"
-          width="160%"
-          height="160%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feImage ref={feImageRef} x="0" y="0" width="64" height="64" preserveAspectRatio="none" result="map" />
-          <feDisplacementMap
-            ref={dispRef}
-            in="SourceGraphic"
-            in2="map"
-            scale="64"
-            xChannelSelector="R"
-            yChannelSelector="G"
-          />
-        </filter>
-      </svg>
       {debugMap && debugUri ? (
         <img
           src={debugUri}
